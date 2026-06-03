@@ -117,6 +117,26 @@ pipeline {
             }
         }
 
+        stage('Run Spark Analysis') {
+            steps {
+                echo '========================================='
+                echo 'Stage 7: Run PySpark Transformations'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/tfl_spark_analysis.py ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "spark-submit --master local[*] ${PROJECT_DIR}/tfl_spark_analysis.py" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Spark analysis completed"
+                '''
+            }
+        }
+
         stage('Create Hive Tables') {
             steps {
                 echo '========================================='

@@ -2,6 +2,7 @@
 
 sqoop import \
   -D mapreduce.framework.name=local \
+  -D mapreduce.jobtracker.staging.root.dir=/tmp/consultant/staging \
   --connect 'jdbc:postgresql://13.42.152.118:5432/testdb' \
   --username admin --password admin123 \
   --table dim_date \
@@ -11,6 +12,7 @@ sqoop import \
 
 sqoop import \
   -D mapreduce.framework.name=local \
+  -D mapreduce.jobtracker.staging.root.dir=/tmp/consultant/staging \
   --connect 'jdbc:postgresql://13.42.152.118:5432/testdb' \
   --username admin --password admin123 \
   --table dim_lines \
@@ -20,6 +22,7 @@ sqoop import \
 
 sqoop import \
   -D mapreduce.framework.name=local \
+  -D mapreduce.jobtracker.staging.root.dir=/tmp/consultant/staging \
   --connect 'jdbc:postgresql://13.42.152.118:5432/testdb' \
   --username admin --password admin123 \
   --table dim_networks \
@@ -29,6 +32,7 @@ sqoop import \
 
 sqoop import \
   -D mapreduce.framework.name=local \
+  -D mapreduce.jobtracker.staging.root.dir=/tmp/consultant/staging \
   --connect 'jdbc:postgresql://13.42.152.118:5432/testdb' \
   --username admin --password admin123 \
   --table dim_stations \
@@ -38,6 +42,7 @@ sqoop import \
 
 sqoop import \
   -D mapreduce.framework.name=local \
+  -D mapreduce.jobtracker.staging.root.dir=/tmp/consultant/staging \
   --connect 'jdbc:postgresql://13.42.152.118:5432/testdb' \
   --username admin --password admin123 \
   --table fact_passenger_entry_exit \
@@ -47,6 +52,7 @@ sqoop import \
 
 sqoop import \
   -D mapreduce.framework.name=local \
+  -D mapreduce.jobtracker.staging.root.dir=/tmp/consultant/staging \
   --connect 'jdbc:postgresql://13.42.152.118:5432/testdb' \
   --username admin --password admin123 \
   --table fact_station_lines \

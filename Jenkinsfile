@@ -71,6 +71,21 @@ pipeline {
             }
         }
 
+        stage('Clean HDFS') {
+            steps {
+                echo '========================================='
+                echo 'Stage 5: Clean HDFS directories'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "hdfs dfs -rm -r -f -skipTrash ${HDFS_DIR} 2>/dev/null || true" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+                    echo "HDFS cleaned"
+                '''
+            }
+        }
+
         stage('Sqoop Import from PostgreSQL to HDFS') {
             steps {
                 echo '========================================='

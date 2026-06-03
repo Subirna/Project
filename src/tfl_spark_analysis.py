@@ -15,6 +15,10 @@ spark.sparkContext.setLogLevel("WARN")
 
 HDFS_BASE   = "/tmp/subirna/TFL_project"
 OUTPUT_BASE = "/tmp/subirna/TFL_project/gold"
+HIVE_DB     = "subirna_tfl"
+
+spark.sql(f"CREATE DATABASE IF NOT EXISTS {HIVE_DB}")
+spark.sql(f"USE {HIVE_DB}")
 
 print("=" * 60)
 print("TFL Data Analysis Pipeline - Subirna")
@@ -75,6 +79,8 @@ busiest_stations.show(truncate=False)
 
 busiest_stations.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_busiest_stations")
+busiest_stations.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_busiest_stations")
 print("Saved: gold_busiest_stations")
 
 # ============================================================
@@ -95,6 +101,8 @@ passengers_by_year.show(truncate=False)
 
 passengers_by_year.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_passengers_by_year")
+passengers_by_year.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_passengers_by_year")
 print("Saved: gold_passengers_by_year")
 
 # ============================================================
@@ -116,6 +124,8 @@ passengers_by_line.show(truncate=False)
 
 passengers_by_line.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_passengers_by_line")
+passengers_by_line.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_passengers_by_line")
 print("Saved: gold_passengers_by_line")
 
 # ============================================================
@@ -137,6 +147,8 @@ passengers_by_network.show(truncate=False)
 
 passengers_by_network.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_passengers_by_network")
+passengers_by_network.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_passengers_by_network")
 print("Saved: gold_passengers_by_network")
 
 # ============================================================
@@ -158,6 +170,8 @@ interchange_stations.show(truncate=False)
 
 interchange_stations.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_interchange_stations")
+interchange_stations.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_interchange_stations")
 print("Saved: gold_interchange_stations")
 
 # ============================================================
@@ -178,6 +192,8 @@ quarterly_trend.show(truncate=False)
 
 quarterly_trend.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_quarterly_trend")
+quarterly_trend.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_quarterly_trend")
 print("Saved: gold_quarterly_trend")
 
 # ============================================================
@@ -201,6 +217,8 @@ night_tube_analysis.show(truncate=False)
 
 night_tube_analysis.write.mode("overwrite") \
     .parquet(f"{OUTPUT_BASE}/gold_night_tube_analysis")
+night_tube_analysis.write.mode("overwrite") \
+    .saveAsTable(f"{HIVE_DB}.gold_night_tube_analysis")
 print("Saved: gold_night_tube_analysis")
 
 # ============================================================

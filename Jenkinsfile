@@ -2,27 +2,40 @@ pipeline {
     agent any
 
     environment {
-        PATH = "/usr/local/sqoop/bin:/usr/lib/sqoop/bin:/opt/sqoop/bin:/usr/bin:/usr/local/bin:${env.PATH}"
+        CLOUDERA_HOST = '13.41.167.97'
+        CLOUDERA_USER = 'consultant'
+        REMOTE_DIR    = '/home/consultant/subirna/TFL_Project'
     }
 
     stages {
-        stage('Check Environment') {
+        stage('Prepare Remote Directory') {
             steps {
-                sh 'which sqoop || find /usr -name sqoop 2>/dev/null | head -5'
-                sh 'which hive || find /usr -name hive 2>/dev/null | head -5'
+                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} mkdir -p ${REMOTE_DIR}/sqoop ${REMOTE_DIR}/hive"
+            }
+        }
+
+        stage('Copy Scripts to Cloudera') {
+            steps {
+                sh "scp src/sqoop_import.sh ${CLOUDERA_USER}@${CLOUDERA_HOST}:${REMOTE_DIR}/sqoop/"
+                sh "scp src/hive_ddl.hql   ${CLOUDERA_USER}@${CLOUDERA_HOST}:${REMOTE_DIR}/hive/"
+            }
+        }
+
+        stage('Set Permissions') {
+            steps {
+                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} chmod +x ${REMOTE_DIR}/sqoop/sqoop_import.sh"
             }
         }
 
         stage('Sqoop Import from PostgreSQL to HDFS') {
             steps {
-                sh 'chmod +x src/sqoop_import.sh'
-                sh 'bash src/sqoop_import.sh'
+                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} bash ${REMOTE_DIR}/sqoop/sqoop_import.sh"
             }
         }
 
         stage('Create Hive Tables') {
             steps {
-                sh 'hive -f src/hive_ddl.hql'
+                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} hive -f ${REMOTE_DIR}/hive/hive_ddl.hql"
             }
         }
     }

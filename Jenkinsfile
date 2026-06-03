@@ -71,6 +71,21 @@ pipeline {
             }
         }
 
+        stage('Prepare Staging Directory') {
+            steps {
+                echo '========================================='
+                echo 'Stage 5: Create local staging directory'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "mkdir -p /tmp/hadoop/mapred/staging" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+                    echo "Staging directory ready"
+                '''
+            }
+        }
+
         stage('Clean HDFS') {
             steps {
                 echo '========================================='

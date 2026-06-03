@@ -1,0 +1,6 @@
+data/*.csv
+data/**/*.csv
+data/*.xls
+data/**/*.xls
+data/*.xlsx
+data/**/*.xlsx

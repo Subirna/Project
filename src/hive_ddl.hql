@@ -14,7 +14,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_date (
 )
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/tmp/consultant/subirna/TFL_project/dim_date'
+LOCATION '/tmp/subirna/TFL_project/dim_date'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 CREATE EXTERNAL TABLE IF NOT EXISTS dim_lines (
@@ -27,7 +27,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_lines (
 )
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/tmp/consultant/subirna/TFL_project/dim_lines'
+LOCATION '/tmp/subirna/TFL_project/dim_lines'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 CREATE EXTERNAL TABLE IF NOT EXISTS dim_networks (
@@ -39,7 +39,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_networks (
 )
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/tmp/consultant/subirna/TFL_project/dim_networks'
+LOCATION '/tmp/subirna/TFL_project/dim_networks'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 CREATE EXTERNAL TABLE IF NOT EXISTS dim_stations (
@@ -58,7 +58,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_stations (
 )
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/tmp/consultant/subirna/TFL_project/dim_stations'
+LOCATION '/tmp/subirna/TFL_project/dim_stations'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 CREATE EXTERNAL TABLE IF NOT EXISTS fact_station_lines (
@@ -72,7 +72,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS fact_station_lines (
 )
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/tmp/consultant/subirna/TFL_project/fact_station_lines'
+LOCATION '/tmp/subirna/TFL_project/fact_station_lines'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 CREATE EXTERNAL TABLE IF NOT EXISTS fact_passenger_entry_exit (
@@ -88,7 +88,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS fact_passenger_entry_exit (
 )
 ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/tmp/consultant/subirna/TFL_project/fact_passenger_entry_exit'
+LOCATION '/tmp/subirna/TFL_project/fact_passenger_entry_exit'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 CREATE TABLE IF NOT EXISTS subirna_tfl.gold_busiest_stations AS

@@ -145,7 +145,7 @@ pipeline {
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "hive -f ${PROJECT_DIR}/hive/hive_ddl.hql" 2>&1 | \
+                        "beeline -u 'jdbc:hive2://ip-172-31-12-74.eu-west-2.compute.internal:10000/default' -f ${PROJECT_DIR}/hive/hive_ddl.hql" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
                     echo "Hive tables created"

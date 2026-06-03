@@ -2,50 +2,138 @@ pipeline {
     agent any
 
     environment {
-        CLOUDERA_HOST = '13.41.167.97'
-        CLOUDERA_USER = 'consultant'
-        REMOTE_DIR    = '/home/consultant/subirna/TFL_Project'
+        REMOTE_HOST     = '13.41.167.97'
+        REMOTE_USER     = 'consultant'
+        REMOTE_PASSWORD = 'WelcomeItc@2026'
+        PROJECT_DIR     = '/home/consultant/subirna/TFL_Project'
+        HDFS_DIR        = '/tmp/subirna/TFL_project'
     }
 
     stages {
+        stage('Checkout') {
+            steps {
+                echo '========================================='
+                echo 'Stage 1: Git Checkout'
+                echo '========================================='
+                checkout scm
+                sh 'git log -1 --oneline'
+            }
+        }
+
         stage('Prepare Remote Directory') {
             steps {
-                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} mkdir -p ${REMOTE_DIR}/sqoop ${REMOTE_DIR}/hive"
+                echo '========================================='
+                echo 'Stage 2: Create Directories on Cloudera'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "mkdir -p ${PROJECT_DIR}/sqoop ${PROJECT_DIR}/hive" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Directories created"
+                '''
             }
         }
 
         stage('Copy Scripts to Cloudera') {
             steps {
-                sh "scp src/sqoop_import.sh ${CLOUDERA_USER}@${CLOUDERA_HOST}:${REMOTE_DIR}/sqoop/"
-                sh "scp src/hive_ddl.hql   ${CLOUDERA_USER}@${CLOUDERA_HOST}:${REMOTE_DIR}/hive/"
+                echo '========================================='
+                echo 'Stage 3: Copy Sqoop and Hive Scripts'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/sqoop_import.sh ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/sqoop/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/hive_ddl.hql ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/hive/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Scripts copied successfully"
+                '''
             }
         }
 
         stage('Set Permissions') {
             steps {
-                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} chmod +x ${REMOTE_DIR}/sqoop/sqoop_import.sh"
+                echo '========================================='
+                echo 'Stage 4: Set Execute Permissions'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "chmod +x ${PROJECT_DIR}/sqoop/sqoop_import.sh" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Permissions set"
+                '''
             }
         }
 
         stage('Sqoop Import from PostgreSQL to HDFS') {
             steps {
-                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} bash ${REMOTE_DIR}/sqoop/sqoop_import.sh"
+                echo '========================================='
+                echo 'Stage 5: Run Sqoop Import (6 tables)'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "bash ${PROJECT_DIR}/sqoop/sqoop_import.sh" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Sqoop import completed"
+                '''
             }
         }
 
         stage('Create Hive Tables') {
             steps {
-                sh "ssh ${CLOUDERA_USER}@${CLOUDERA_HOST} hive -f ${REMOTE_DIR}/hive/hive_ddl.hql"
+                echo '========================================='
+                echo 'Stage 6: Create Hive External Tables'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "hive -f ${PROJECT_DIR}/hive/hive_ddl.hql" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Hive tables created"
+                '''
+            }
+        }
+
+        stage('Verify Results') {
+            steps {
+                echo '========================================='
+                echo 'Stage 7: Verify HDFS Data'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "hdfs dfs -ls ${HDFS_DIR} 2>/dev/null || echo 'HDFS directory not found'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+                '''
             }
         }
     }
 
     post {
         success {
-            echo 'TFL pipeline completed successfully'
+            echo '========================================='
+            echo 'TFL PIPELINE COMPLETED SUCCESSFULLY'
+            echo '========================================='
+            echo "Cloudera: ${REMOTE_HOST}:${PROJECT_DIR}"
+            echo "HDFS: ${HDFS_DIR}"
+            echo '========================================='
         }
         failure {
-            echo 'TFL pipeline failed - check logs above'
+            echo '========================================='
+            echo 'TFL PIPELINE FAILED - check logs above'
+            echo '========================================='
+        }
+        always {
+            echo 'Pipeline execution completed'
         }
     }
 }

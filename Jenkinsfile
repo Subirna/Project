@@ -6,7 +6,7 @@ pipeline {
         REMOTE_USER     = 'consultant'
         REMOTE_PASSWORD = 'WelcomeItc@2026'
         PROJECT_DIR     = '/home/consultant/subirna/TFL_Project'
-        HDFS_DIR        = '/tmp/subirna/TFL_project'
+        HDFS_DIR        = '/tmp/consultant/subirna/TFL_project'
     }
 
     stages {

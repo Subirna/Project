@@ -1,5 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, sum as _sum, count, avg, desc
+from pyspark.sql.types import IntegerType
 
 spark = SparkSession.builder \
     .appName("TFL_Analysis_Subirna") \
@@ -220,7 +221,7 @@ print("=" * 60)
 
 quarterly_trend = fact_pax \
     .join(dim_date, "date_id") \
-    .groupBy("year", "quarter") \
+    .groupBy(col("year").cast(IntegerType()), col("quarter").cast(IntegerType())) \
     .agg(_sum("total_entry_exit").alias("total_passengers")) \
     .orderBy("year", "quarter")
 

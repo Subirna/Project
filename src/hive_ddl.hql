@@ -91,8 +91,11 @@ STORED AS TEXTFILE
 LOCATION '/tmp/subirna/TFL_project/fact_passenger_entry_exit'
 TBLPROPERTIES ('serialization.null.format'='null');
 
--- Gold tables are created by the PySpark script as external parquet tables.
--- Drop any stale managed ACID gold tables so Spark can register them as external.
+-- ============================================================
+-- GOLD LAYER: Drop old managed/ACID tables then re-create as
+-- external parquet tables pointing to Spark output on HDFS.
+-- ============================================================
+
 DROP TABLE IF EXISTS subirna_tfl.gold_busiest_stations;
 DROP TABLE IF EXISTS subirna_tfl.gold_passengers_by_year;
 DROP TABLE IF EXISTS subirna_tfl.gold_passengers_by_line;
@@ -100,3 +103,56 @@ DROP TABLE IF EXISTS subirna_tfl.gold_passengers_by_network;
 DROP TABLE IF EXISTS subirna_tfl.gold_interchange_stations;
 DROP TABLE IF EXISTS subirna_tfl.gold_quarterly_trend;
 DROP TABLE IF EXISTS subirna_tfl.gold_night_tube_analysis;
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_busiest_stations (
+  station_name      STRING,
+  total_passengers  BIGINT
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_busiest_stations';
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_passengers_by_year (
+  year             INT,
+  total_passengers BIGINT
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_passengers_by_year';
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_passengers_by_line (
+  line_name        STRING,
+  total_passengers BIGINT
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_passengers_by_line';
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_passengers_by_network (
+  network_name     STRING,
+  network_type     STRING,
+  total_passengers BIGINT
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_passengers_by_network';
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_interchange_stations (
+  station_name STRING,
+  num_lines    BIGINT
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_interchange_stations';
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_quarterly_trend (
+  year             INT,
+  quarter          INT,
+  total_passengers BIGINT
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_quarterly_trend';
+
+CREATE EXTERNAL TABLE subirna_tfl.gold_night_tube_analysis (
+  has_night_tube           BOOLEAN,
+  num_records              BIGINT,
+  total_passengers         BIGINT,
+  avg_passengers_per_record DOUBLE
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/gold/gold_night_tube_analysis';

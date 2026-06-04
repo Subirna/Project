@@ -114,24 +114,12 @@ fact_lines = spark.read.option("header", "false").option("inferSchema", "true") 
 
 print("All 6 tables loaded successfully")
 
-# Helper function to save DataFrame as Hive external table
+# Helper: write analysis result to HDFS as parquet.
+# Hive external table registration is handled by hive_ddl.hql (runs after this stage).
 def save_gold_table(df, table_name):
     path = f"{OUTPUT_BASE}/{table_name}"
     df.write.mode("overwrite").parquet(path)
-    try:
-        spark.sql(f"DROP TABLE IF EXISTS {HIVE_DB}.{table_name}")
-    except Exception:
-        # Managed ACID tables cannot be dropped by Spark; hive_ddl.hql cleans these up
-        pass
-    try:
-        spark.sql(f"""
-            CREATE EXTERNAL TABLE IF NOT EXISTS {HIVE_DB}.{table_name}
-            STORED AS PARQUET
-            LOCATION '{path}'
-        """)
-    except Exception:
-        pass
-    print(f"Saved: {table_name}")
+    print(f"Saved to HDFS: {path}")
 
 # ============================================================
 # ANALYSIS 1: Top 10 Busiest Stations

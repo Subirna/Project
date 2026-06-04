@@ -118,12 +118,19 @@ print("All 6 tables loaded successfully")
 def save_gold_table(df, table_name):
     path = f"{OUTPUT_BASE}/{table_name}"
     df.write.mode("overwrite").parquet(path)
-    spark.sql(f"DROP TABLE IF EXISTS {HIVE_DB}.{table_name}")
-    spark.sql(f"""
-        CREATE EXTERNAL TABLE {HIVE_DB}.{table_name}
-        STORED AS PARQUET
-        LOCATION '{path}'
-    """)
+    try:
+        spark.sql(f"DROP TABLE IF EXISTS {HIVE_DB}.{table_name}")
+    except Exception:
+        # Managed ACID tables cannot be dropped by Spark; hive_ddl.hql cleans these up
+        pass
+    try:
+        spark.sql(f"""
+            CREATE EXTERNAL TABLE IF NOT EXISTS {HIVE_DB}.{table_name}
+            STORED AS PARQUET
+            LOCATION '{path}'
+        """)
+    except Exception:
+        pass
     print(f"Saved: {table_name}")
 
 # ============================================================

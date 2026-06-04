@@ -91,9 +91,12 @@ STORED AS TEXTFILE
 LOCATION '/tmp/subirna/TFL_project/fact_passenger_entry_exit'
 TBLPROPERTIES ('serialization.null.format'='null');
 
-CREATE TABLE IF NOT EXISTS subirna_tfl.gold_busiest_stations AS
-SELECT d.year, s.station_name, SUM(f.total_entry_exit) AS total
-FROM fact_passenger_entry_exit f
-JOIN dim_date d     ON f.date_id = d.date_id
-JOIN dim_stations s ON f.station_id = s.station_id
-GROUP BY d.year, s.station_name;
+-- Gold tables are created by the PySpark script as external parquet tables.
+-- Drop any stale managed ACID gold tables so Spark can register them as external.
+DROP TABLE IF EXISTS subirna_tfl.gold_busiest_stations;
+DROP TABLE IF EXISTS subirna_tfl.gold_passengers_by_year;
+DROP TABLE IF EXISTS subirna_tfl.gold_passengers_by_line;
+DROP TABLE IF EXISTS subirna_tfl.gold_passengers_by_network;
+DROP TABLE IF EXISTS subirna_tfl.gold_interchange_stations;
+DROP TABLE IF EXISTS subirna_tfl.gold_quarterly_trend;
+DROP TABLE IF EXISTS subirna_tfl.gold_night_tube_analysis;

@@ -3,13 +3,7 @@
 #  FILE: get_watermark.sh
 #  PROJECT: TFL Data Pipeline - Subirna
 # =============================================================
-#
-#  PURPOSE:
-#    Query Hive to find the latest created_at timestamp already
-#    loaded for a SPECIFIC TABLE.
-#
-#    Called once per table so every table gets its own watermark.
-#    Only records newer than the watermark are imported next time.
+
 #
 #  USAGE:
 #    bash get_watermark.sh <table_name> <check_column>
@@ -22,7 +16,7 @@
 #    bash get_watermark.sh fact_passenger_entry_exit created_at
 #    bash get_watermark.sh fact_station_lines        created_at
 #
-#  OUTPUT FORMAT (same as Uttam's get_watermark.sh):
+#  OUTPUT FORMAT:
 #    last_value=2021-03-01 10:00:00
 #
 #  FALLBACK:

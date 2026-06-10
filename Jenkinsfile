@@ -87,7 +87,7 @@ pipeline {
                 echo 'Stage 3: Copy All Scripts (full + incremental)'
                 echo '========================================='
                 sh '''
-                    // ── Full load scripts (original, unchanged) ───────────
+                    # Full load scripts (original, unchanged)
                     sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         src/sqoop_import.sh ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/sqoop/ 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
@@ -100,7 +100,7 @@ pipeline {
                         src/hive_ddl.hql ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/hive/ 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    // ── Incremental scripts (new) ─────────────────────────
+                    # Incremental scripts (new)
                     sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         src/simulate_data_split.py ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/ 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true

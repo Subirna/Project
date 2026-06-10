@@ -3,72 +3,59 @@
 =============================================================
  FILE: incremental_spark.py
  PROJECT: TFL Data Pipeline - Subirna
+ LOAD TYPE: TRULY INCREMENTAL SPARK
 =============================================================
 
 PURPOSE:
-  This script handles the SPARK PROCESSING for incremental load.
-  It runs AFTER incremental_sqoop.py has imported new data.
+  Process ONLY the new incremental data (2020-2021).
+  Merge intelligently with existing gold tables.
+  Does NOT re-read or re-process the full load data (2017-2019).
 
-  It reads BOTH:
-    1. The original FULL LOAD data  (from sqoop_import.sh)
-    2. The new INCREMENTAL data     (from incremental_sqoop.py)
+WHY THIS IS BETTER THAN READING ALL DATA:
+  Old approach (wrong):
+    Read 2017-2019 raw data  +  Read 2020-2021 raw data
+    Union all  →  Re-calculate everything from scratch
+    Problem: Gets slower every time. Not truly incremental.
 
-  Then COMBINES them and recalculates all 7 gold tables.
+  New approach (correct — this script):
+    Read ONLY 2020-2021 raw data  (fast, small)
+    Calculate gold results for 2020-2021 only
+    Merge with existing gold tables
+    Problem solved: always fast, only processes new data.
 
-DIFFERENCE FROM FULL LOAD (tfl_spark_analysis.py):
-  Full load Spark    → reads only the HDFS_FULL data
-  Incremental Spark  → reads HDFS_FULL + HDFS_INC, unions them together
+TWO MERGE STRATEGIES based on gold table type:
 
-WHY UNION?
-  The full load contains historical rows (e.g. entry_exit_id 1 to 5000).
-  The incremental contains new rows (e.g. entry_exit_id 5001 to 5050).
-  Union combines both: 1 to 5050 = complete and up-to-date dataset.
+  STRATEGY 1 — APPEND (for year-based gold tables):
+    gold_passengers_by_year  → 2020,2021 rows added, no overlap with 2017-2019
+    gold_quarterly_trend     → 2020,2021 quarters added, no overlap
 
-HDFS STRUCTURE:
-  /tmp/subirna/TFL_project/                    ← FULL LOAD (sqoop_import.sh output)
-      dim_date/
-      dim_lines/
-      dim_networks/
-      dim_stations/
-      fact_passenger_entry_exit/
-      fact_station_lines/
+    Steps: calculate new year results → append to existing gold table
+    Why append works: years 2020-2021 don't exist in old gold (which has 2017-2019)
+    No duplicates possible.
 
-  /tmp/subirna/TFL_project/incremental/        ← INCREMENTAL (incremental_sqoop.py output)
-      dim_date/          ← fresh full re-import of dims (latest version)
-      dim_lines/
-      dim_networks/
-      dim_stations/
-      fact_passenger_entry_exit/   ← ONLY new rows (not all rows)
-      fact_station_lines/          ← ONLY new rows (not all rows)
+  STRATEGY 2 — MERGE (for cross-year aggregate gold tables):
+    gold_busiest_stations    → totals across ALL years, need to add new to old
+    gold_passengers_by_line  → totals across ALL years
+    gold_passengers_by_network → totals across ALL years
+    gold_interchange_stations → uses station-line mapping, no year dependency
+    gold_night_tube_analysis  → totals across ALL years
 
-  /tmp/subirna/TFL_project/gold/               ← OUTPUT (OVERWRITTEN with updated data)
-      gold_busiest_stations/
-      gold_passengers_by_year/
-      gold_passengers_by_line/
-      gold_passengers_by_network/
-      gold_interchange_stations/
-      gold_quarterly_trend/
-      gold_night_tube_analysis/
+    Steps: read existing gold + calculate new → union → re-aggregate → overwrite
+    Example:
+      Old gold_busiest_stations: King's Cross = 500M (2017-2019)
+      New result:                King's Cross = 200M (2020-2021)
+      Union + re-SUM:            King's Cross = 700M ← correct total
 
-USAGE:
-  spark-submit incremental_spark.py
-  OR: python3 incremental_spark.py
-
-RUN ORDER:
-  Step 1: sqoop_import.sh          (full load — run ONCE at the beginning)
-  Step 2: tfl_spark_analysis.py    (full load Spark — run ONCE)
-  Step 3: incremental_sqoop.py     (run each time new data arrives)
-  Step 4: incremental_spark.py     (this file — run after Step 3)
+HDFS PATHS:
+  Full load raw data  : /tmp/subirna/TFL_project/              (NOT read here)
+  Incremental raw data: /tmp/subirna/TFL_project/incremental/  (read here)
+  Gold tables         : /tmp/subirna/TFL_project/gold/         (read + updated)
 =============================================================
 """
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, sum as _sum, count, avg, desc
 from pyspark.sql.types import IntegerType
-
-# =============================================================
-#  SPARK SESSION
-# =============================================================
 
 spark = SparkSession.builder \
     .appName("TFL_Incremental_Spark_Subirna") \
@@ -77,34 +64,21 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("WARN")
 
-
 # =============================================================
-#  HDFS PATH CONFIGURATION
+#  HDFS PATHS
 # =============================================================
 
-# Original full load data — created by sqoop_import.sh
-# We READ from here but NEVER write or delete it
-HDFS_FULL = "/tmp/subirna/TFL_project"
-
-# Incremental data — created by incremental_sqoop.py
-# Dimension tables here are fresh full re-imports
-# Fact tables here contain ONLY the new rows since last run
-HDFS_INC  = "/tmp/subirna/TFL_project/incremental"
-
-# Gold tables — our final analysis output
-# These get OVERWRITTEN each run with updated, complete results
-GOLD_BASE = "/tmp/subirna/TFL_project/gold"
-
-HIVE_DB = "subirna_tfl"
+HDFS_INC  = "/tmp/subirna/TFL_project/incremental"  # new data only (2020-2021)
+GOLD_BASE = "/tmp/subirna/TFL_project/gold"          # existing gold tables
+HIVE_DB   = "subirna_tfl"
 
 spark.sql(f"USE {HIVE_DB}")
 
 print("=" * 60)
-print("TFL INCREMENTAL SPARK PIPELINE - Subirna")
+print("TFL TRULY INCREMENTAL SPARK PIPELINE - Subirna")
+print("Processes ONLY new data (2020-2021)")
+print("Merges with existing gold tables")
 print("=" * 60)
-print(f"Full load data   : {HDFS_FULL}")
-print(f"Incremental data : {HDFS_INC}")
-print(f"Gold output      : {GOLD_BASE}")
 
 
 # =============================================================
@@ -112,212 +86,119 @@ print(f"Gold output      : {GOLD_BASE}")
 # =============================================================
 
 def read_csv(path, columns):
-    """
-    Read a headerless CSV file from HDFS and assign column names.
-
-    Parameters:
-      path    - HDFS directory path (sqoop creates one CSV per mapper)
-      columns - list of column names in the correct order
-
-    inferSchema=True means Spark automatically detects INT, STRING etc.
-    """
     return (
         spark.read
-        .option("header", "false")     # sqoop CSV has no header row
-        .option("inferSchema", "true") # auto-detect column types
+        .option("header", "false")
+        .option("inferSchema", "true")
         .csv(path)
-        .toDF(*columns)                # assign column names
+        .toDF(*columns)
     )
 
 
 # =============================================================
-#  STEP 1: LOAD DIMENSION TABLES
+#  STEP 1: LOAD ONLY INCREMENTAL RAW DATA (2020-2021)
 #
-#  We use the INCREMENTAL versions of dimension tables.
-#  Why? Because incremental_sqoop.py re-imported them fully,
-#  so the incremental/ folder has the LATEST version of each dim.
-#
-#  (The full load dims in HDFS_FULL could be older)
+#  We do NOT read the full load data here.
+#  The full load (2017-2019) results already exist in gold tables.
+#  We only need the new 2020-2021 data.
 # =============================================================
 
-print("\n[STEP 1] Loading dimension tables from incremental/...")
+print("\n[STEP 1] Loading ONLY incremental raw data (2020-2021)...")
+print(f"Reading from: {HDFS_INC}")
+print("NOT reading full load data — gold tables already have 2017-2019 results")
 
-dim_date = read_csv(
-    path    = f"{HDFS_INC}/dim_date",
-    columns = ["date_id","year","quarter","month","is_annual",
-               "period_label","period_start","period_end","created_at"]
-)
+# New dimension data (fresh re-import from incremental_sqoop.py)
+dim_date = read_csv(f"{HDFS_INC}/dim_date", [
+    "date_id","year","quarter","month","is_annual",
+    "period_label","period_start","period_end","created_at"
+])
 
-dim_lines = read_csv(
-    path    = f"{HDFS_INC}/dim_lines",
-    columns = ["line_id","line_name","line_color","is_night_service",
-               "created_at","updated_at"]
-)
+dim_lines = read_csv(f"{HDFS_INC}/dim_lines", [
+    "line_id","line_name","line_color","is_night_service","created_at","updated_at"
+])
 
-dim_networks = read_csv(
-    path    = f"{HDFS_INC}/dim_networks",
-    columns = ["network_id","network_name","network_type",
-               "created_at","updated_at"]
-)
+dim_networks = read_csv(f"{HDFS_INC}/dim_networks", [
+    "network_id","network_name","network_type","created_at","updated_at"
+])
 
-dim_stations = read_csv(
-    path    = f"{HDFS_INC}/dim_stations",
-    columns = ["station_id","nlc_code","station_name","network_id",
-               "has_london_underground","has_elizabeth_line","has_overground",
-               "has_dlr","has_night_tube","is_active","created_at","updated_at"]
-)
+dim_stations = read_csv(f"{HDFS_INC}/dim_stations", [
+    "station_id","nlc_code","station_name","network_id",
+    "has_london_underground","has_elizabeth_line","has_overground",
+    "has_dlr","has_night_tube","is_active","created_at","updated_at"
+])
 
-print("Dimension tables loaded (latest version from incremental/).")
+# New fact data — ONLY 2020-2021 rows (imported by incremental_sqoop.py)
+fact_pax_new = read_csv(f"{HDFS_INC}/fact_passenger_entry_exit", [
+    "entry_exit_id","station_id","date_id","total_entry_exit",
+    "estimated_entries","estimated_exits","record_type","data_source","created_at"
+])
 
+fact_lines_new = read_csv(f"{HDFS_INC}/fact_station_lines", [
+    "station_line_id","station_id","line_id","is_interchange",
+    "effective_from","effective_to","created_at"
+])
 
-# =============================================================
-#  STEP 2: LOAD FACT TABLES (FULL LOAD + INCREMENTAL COMBINED)
-#
-#  This is the KEY DIFFERENCE from the full load script.
-#
-#  We read the fact data from TWO locations:
-#    HDFS_FULL → all historical rows (from sqoop_import.sh)
-#    HDFS_INC  → only the new rows (from incremental_sqoop.py)
-#
-#  Then we UNION them together to get the complete dataset.
-#
-#  UNION means: stack the two DataFrames on top of each other.
-#  The combined DataFrame has ALL rows from both sources.
-# =============================================================
-
-print("\n[STEP 2] Loading fact tables (combining full load + incremental)...")
-
-PAX_COLS = [
-    "entry_exit_id", "station_id", "date_id",
-    "total_entry_exit", "estimated_entries", "estimated_exits",
-    "record_type", "data_source", "created_at"
-]
-
-# ── fact_passenger_entry_exit ──────────────────────────────────────────────────
-# Read historical rows (full load)
-fact_pax_full = read_csv(f"{HDFS_FULL}/fact_passenger_entry_exit", PAX_COLS)
-
-# Read new rows (incremental — only rows added since last sqoop run)
-fact_pax_inc  = read_csv(f"{HDFS_INC}/fact_passenger_entry_exit", PAX_COLS)
-
-# UNION: combine both into one complete DataFrame
-# fact_pax now contains ALL rows: historical + new
-fact_pax = fact_pax_full.union(fact_pax_inc)
-
-print(f"  fact_passenger_entry_exit:")
-print(f"    Full load rows      = {fact_pax_full.count()}")
-print(f"    Incremental rows    = {fact_pax_inc.count()}   ← only new rows")
-print(f"    Combined total rows = {fact_pax.count()}")
-
-# ── fact_station_lines ─────────────────────────────────────────────────────────
-SL_COLS = [
-    "station_line_id", "station_id", "line_id", "is_interchange",
-    "effective_from", "effective_to", "created_at"
-]
-
-fact_lines_full = read_csv(f"{HDFS_FULL}/fact_station_lines", SL_COLS)
-fact_lines_inc  = read_csv(f"{HDFS_INC}/fact_station_lines", SL_COLS)
-fact_lines      = fact_lines_full.union(fact_lines_inc)
-
-print(f"\n  fact_station_lines:")
-print(f"    Full load rows      = {fact_lines_full.count()}")
-print(f"    Incremental rows    = {fact_lines_inc.count()}")
-print(f"    Combined total rows = {fact_lines.count()}")
+print(f"  New passenger records (2020-2021): {fact_pax_new.count()}")
+print(f"  New station-line records          : {fact_lines_new.count()}")
 
 
 # =============================================================
-#  HELPER: Save Gold Table
-#  mode("overwrite") replaces old gold table with updated data
+#  STEP 2: HELPER FUNCTIONS FOR MERGING GOLD TABLES
 # =============================================================
 
-def save_gold_table(df, table_name):
-    """
-    Write a DataFrame to HDFS as Parquet format.
-    mode("overwrite") means the old gold table is replaced with
-    the newly calculated result (which includes incremental data).
-    """
+def read_gold(table_name):
+    """Read existing gold table from HDFS parquet."""
+    path = f"{GOLD_BASE}/{table_name}"
+    return spark.read.parquet(path)
+
+def save_gold(df, table_name):
+    """Write updated gold table to HDFS."""
     path = f"{GOLD_BASE}/{table_name}"
     df.write.mode("overwrite").parquet(path)
     print(f"  Updated → {path}")
 
 
 # =============================================================
-#  ANALYSES (same 7 as the full load script)
-#  But now fact_pax and fact_lines contain the COMBINED data,
-#  so all analyses automatically include the new rows.
+#  STEP 3: STRATEGY 1 — APPEND (year-based gold tables)
+#
+#  For gold tables where years do NOT overlap between
+#  full load (2017-2019) and incremental (2020-2021).
+#
+#  Just calculate new year results and APPEND to gold table.
+#  No risk of duplicates because years are different.
 # =============================================================
 
-print("\n[STEP 3] Running analyses on combined dataset...")
+print("\n[STEP 3] STRATEGY 1 — Append new year results to gold tables")
+print("(years 2020-2021 don't exist in old gold → safe to append)")
 
-# ── ANALYSIS 1: Top 10 Busiest Stations ───────────────────────────────────────
-print("\n--- ANALYSIS 1: Top 10 Busiest Stations ---")
-busiest_stations = (
-    fact_pax
-    .join(dim_stations, "station_id")
-    .groupBy("station_name")
-    .agg(_sum("total_entry_exit").alias("total_passengers"))
-    .orderBy(desc("total_passengers"))
-    .limit(10)
-)
-busiest_stations.show(truncate=False)
-save_gold_table(busiest_stations, "gold_busiest_stations")
+# ── gold_passengers_by_year ────────────────────────────────────────────────────
+# Old gold has: 2017, 2018, 2019 rows
+# New result:   2020, 2021 rows
+# Append → gold table now has all 5 years, no duplicates
+print("\n--- gold_passengers_by_year ---")
 
-# ── ANALYSIS 2: Passengers by Year ────────────────────────────────────────────
-# NEW YEARS from incremental data will now appear here automatically
-print("\n--- ANALYSIS 2: Total Passengers by Year ---")
-passengers_by_year = (
-    fact_pax
+new_passengers_by_year = (
+    fact_pax_new
     .join(dim_date, "date_id")
     .groupBy("year")
     .agg(_sum("total_entry_exit").alias("total_passengers"))
     .orderBy("year")
 )
-passengers_by_year.show(truncate=False)
-save_gold_table(passengers_by_year, "gold_passengers_by_year")
+new_passengers_by_year.show(truncate=False)
 
-# ── ANALYSIS 3: Passengers by Tube Line ───────────────────────────────────────
-print("\n--- ANALYSIS 3: Passengers by Tube Line ---")
-passengers_by_line = (
-    fact_pax
-    .join(fact_lines, "station_id")
-    .join(dim_lines, "line_id")
-    .groupBy("line_name")
-    .agg(_sum("total_entry_exit").alias("total_passengers"))
-    .orderBy(desc("total_passengers"))
-)
-passengers_by_line.show(truncate=False)
-save_gold_table(passengers_by_line, "gold_passengers_by_line")
+# Read existing gold + append new years
+existing = read_gold("gold_passengers_by_year")
+updated  = existing.union(new_passengers_by_year).orderBy("year")
+save_gold(updated, "gold_passengers_by_year")
 
-# ── ANALYSIS 4: Passengers by Network ─────────────────────────────────────────
-print("\n--- ANALYSIS 4: Passengers by Network Type ---")
-passengers_by_network = (
-    fact_pax
-    .join(dim_stations, "station_id")
-    .join(dim_networks, "network_id")
-    .groupBy("network_name", "network_type")
-    .agg(_sum("total_entry_exit").alias("total_passengers"))
-    .orderBy(desc("total_passengers"))
-)
-passengers_by_network.show(truncate=False)
-save_gold_table(passengers_by_network, "gold_passengers_by_network")
+# ── gold_quarterly_trend ───────────────────────────────────────────────────────
+# Old gold has: Q1-Q4 of 2017, 2018, 2019
+# New result:   Q1-Q4 of 2020, 2021
+# No year overlap → safe to append
+print("\n--- gold_quarterly_trend ---")
 
-# ── ANALYSIS 5: Interchange Stations ──────────────────────────────────────────
-print("\n--- ANALYSIS 5: Top Interchange Stations ---")
-interchange_stations = (
-    fact_lines
-    .join(dim_stations, "station_id")
-    .groupBy("station_name")
-    .agg(count("line_id").alias("num_lines"))
-    .orderBy(desc("num_lines"))
-    .limit(15)
-)
-interchange_stations.show(truncate=False)
-save_gold_table(interchange_stations, "gold_interchange_stations")
-
-# ── ANALYSIS 6: Quarterly Trend ───────────────────────────────────────────────
-print("\n--- ANALYSIS 6: Passengers by Year and Quarter ---")
-quarterly_trend = (
-    fact_pax
+new_quarterly_trend = (
+    fact_pax_new
     .join(dim_date, "date_id")
     .groupBy(
         col("year").cast(IntegerType()),
@@ -326,13 +207,125 @@ quarterly_trend = (
     .agg(_sum("total_entry_exit").alias("total_passengers"))
     .orderBy("year", "quarter")
 )
-quarterly_trend.show(truncate=False)
-save_gold_table(quarterly_trend, "gold_quarterly_trend")
+new_quarterly_trend.show(truncate=False)
 
-# ── ANALYSIS 7: Night Tube Analysis ───────────────────────────────────────────
-print("\n--- ANALYSIS 7: Night Tube vs Regular Stations ---")
-night_tube_analysis = (
-    fact_pax
+existing = read_gold("gold_quarterly_trend")
+updated  = existing.union(new_quarterly_trend).orderBy("year", "quarter")
+save_gold(updated, "gold_quarterly_trend")
+
+
+# =============================================================
+#  STEP 4: STRATEGY 2 — MERGE (cross-year aggregate gold tables)
+#
+#  For gold tables that SUM across ALL years together.
+#  We cannot simply append because totals need to include
+#  both old (2017-2019) and new (2020-2021) data.
+#
+#  Approach:
+#    1. Read EXISTING gold table (has 2017-2019 aggregated totals)
+#    2. Calculate NEW results from incremental data (2020-2021 only)
+#    3. Union old gold + new results
+#    4. Re-aggregate (SUM the two partial totals together)
+#    5. Overwrite gold table
+#
+#  Example for gold_busiest_stations:
+#    Old gold: King's Cross = 500M (2017-2019 total)
+#    New calc: King's Cross = 200M (2020-2021 total)
+#    Union → re-SUM → King's Cross = 700M  ← correct all-years total
+# =============================================================
+
+print("\n[STEP 4] STRATEGY 2 — Merge new results into cross-year gold tables")
+print("(read old gold + calculate new → union → re-aggregate)")
+
+# ── gold_busiest_stations ──────────────────────────────────────────────────────
+print("\n--- gold_busiest_stations ---")
+
+# Calculate new station totals from 2020-2021 data only
+new_station_totals = (
+    fact_pax_new
+    .join(dim_stations, "station_id")
+    .groupBy("station_name")
+    .agg(_sum("total_entry_exit").alias("total_passengers"))
+)
+
+# Read old gold (has 2017-2019 totals) + union with new (2020-2021 totals)
+# Then re-SUM by station to get the combined all-years total
+existing = read_gold("gold_busiest_stations")
+merged   = existing.union(new_station_totals)
+updated  = (
+    merged
+    .groupBy("station_name")
+    .agg(_sum("total_passengers").alias("total_passengers"))
+    .orderBy(desc("total_passengers"))
+    .limit(10)
+)
+updated.show(truncate=False)
+save_gold(updated, "gold_busiest_stations")
+
+# ── gold_passengers_by_line ────────────────────────────────────────────────────
+print("\n--- gold_passengers_by_line ---")
+
+new_by_line = (
+    fact_pax_new
+    .join(fact_lines_new, "station_id")
+    .join(dim_lines, "line_id")
+    .groupBy("line_name")
+    .agg(_sum("total_entry_exit").alias("total_passengers"))
+)
+
+existing = read_gold("gold_passengers_by_line")
+merged   = existing.union(new_by_line)
+updated  = (
+    merged
+    .groupBy("line_name")
+    .agg(_sum("total_passengers").alias("total_passengers"))
+    .orderBy(desc("total_passengers"))
+)
+updated.show(truncate=False)
+save_gold(updated, "gold_passengers_by_line")
+
+# ── gold_passengers_by_network ─────────────────────────────────────────────────
+print("\n--- gold_passengers_by_network ---")
+
+new_by_network = (
+    fact_pax_new
+    .join(dim_stations, "station_id")
+    .join(dim_networks, "network_id")
+    .groupBy("network_name", "network_type")
+    .agg(_sum("total_entry_exit").alias("total_passengers"))
+)
+
+existing = read_gold("gold_passengers_by_network")
+merged   = existing.union(new_by_network)
+updated  = (
+    merged
+    .groupBy("network_name", "network_type")
+    .agg(_sum("total_passengers").alias("total_passengers"))
+    .orderBy(desc("total_passengers"))
+)
+updated.show(truncate=False)
+save_gold(updated, "gold_passengers_by_network")
+
+# ── gold_interchange_stations ──────────────────────────────────────────────────
+# Station-line mappings don't change by year — just refresh from new fact_lines
+print("\n--- gold_interchange_stations ---")
+
+updated_interchange = (
+    fact_lines_new
+    .join(dim_stations, "station_id")
+    .groupBy("station_name")
+    .agg(count("line_id").alias("num_lines"))
+    .orderBy(desc("num_lines"))
+    .limit(15)
+)
+updated_interchange.show(truncate=False)
+save_gold(updated_interchange, "gold_interchange_stations")
+
+# ── gold_night_tube_analysis ───────────────────────────────────────────────────
+print("\n--- gold_night_tube_analysis ---")
+
+new_night_tube = (
+    fact_pax_new
     .join(dim_stations, "station_id")
     .groupBy("has_night_tube")
     .agg(
@@ -341,8 +334,20 @@ night_tube_analysis = (
         avg("total_entry_exit").alias("avg_passengers_per_record")
     )
 )
-night_tube_analysis.show(truncate=False)
-save_gold_table(night_tube_analysis, "gold_night_tube_analysis")
+
+existing = read_gold("gold_night_tube_analysis")
+merged   = existing.union(new_night_tube)
+updated  = (
+    merged
+    .groupBy("has_night_tube")
+    .agg(
+        _sum("num_records").alias("num_records"),
+        _sum("total_passengers").alias("total_passengers"),
+        avg("avg_passengers_per_record").alias("avg_passengers_per_record")
+    )
+)
+updated.show(truncate=False)
+save_gold(updated, "gold_night_tube_analysis")
 
 
 # =============================================================
@@ -350,17 +355,21 @@ save_gold_table(night_tube_analysis, "gold_night_tube_analysis")
 # =============================================================
 
 print("\n" + "=" * 60)
-print("INCREMENTAL SPARK PIPELINE COMPLETE")
+print("TRULY INCREMENTAL SPARK PIPELINE COMPLETE")
 print("=" * 60)
-print("Data sources used:")
-print(f"  Full load data   : {HDFS_FULL}")
-print(f"  Incremental data : {HDFS_INC}")
-print("\nGold tables updated at:")
-for t in ["gold_busiest_stations", "gold_passengers_by_year",
-          "gold_passengers_by_line", "gold_passengers_by_network",
-          "gold_interchange_stations", "gold_quarterly_trend",
-          "gold_night_tube_analysis"]:
-    print(f"  {GOLD_BASE}/{t}")
+print("Only processed: 2020-2021 data (incremental)")
+print("Did NOT re-read: 2017-2019 data (full load)")
+print("")
+print("Strategy 1 — Append (year-based, no overlap):")
+print("  gold_passengers_by_year  ← appended 2020, 2021 rows")
+print("  gold_quarterly_trend     ← appended 2020, 2021 quarters")
+print("")
+print("Strategy 2 — Merge (cross-year aggregates):")
+print("  gold_busiest_stations    ← re-summed with new station totals")
+print("  gold_passengers_by_line  ← re-summed with new line totals")
+print("  gold_passengers_by_network ← re-summed with new network totals")
+print("  gold_interchange_stations  ← refreshed from new mapping data")
+print("  gold_night_tube_analysis   ← re-summed with new night tube data")
 print("=" * 60)
 
 spark.stop()

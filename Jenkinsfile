@@ -29,12 +29,12 @@ pipeline {
     //  Same values as original Jenkinsfile, unchanged
     // ==========================================================
     environment {
-        REMOTE_HOST     = '13.41.167.97'
-        REMOTE_USER     = 'consultant'
-        REMOTE_PASSWORD = 'WelcomeItc@2026'
-        PROJECT_DIR     = '/home/consultant/subirna/TFL_Project'
-        HDFS_DIR        = '/tmp/subirna/TFL_project'
-        HIVESERVER2_HOST = 'ip-172-31-12-74.eu-west-2.compute.internal'
+        REMOTE_HOST      = '13.41.167.97'
+        REMOTE_USER      = 'consultant'
+        REMOTE_PASSWORD  = 'Cl0ud3ra@2026#Secur3!'
+        PROJECT_DIR      = '/home/consultant/subirna/TFL_Project'
+        HDFS_DIR         = '/tmp/subirna/TFL_project'
+        HIVESERVER2_HOST = '18.175.245.20'
     }
 
     stages {

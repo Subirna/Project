@@ -346,7 +346,7 @@ pipeline {
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "spark-submit --master local[*] ${PROJECT_DIR}/incremental_spark.py 2>&1 | grep -v 'ITC Big Data Lab' | grep -v 'Commands:' | grep -v 'HDFS home:' | grep -v '━'; exit \${PIPESTATUS[0]}"
+                        "spark-submit --master local[*] ${PROJECT_DIR}/incremental_spark.py > /tmp/spark_inc.log 2>&1; SPARK_EC=\$?; grep -v 'ITC Big Data Lab' /tmp/spark_inc.log | grep -v 'Commands:' | grep -v 'HDFS home:' | grep -v '━' || true; rm -f /tmp/spark_inc.log; exit \$SPARK_EC"
 
                     echo "Incremental Spark completed"
                 '''

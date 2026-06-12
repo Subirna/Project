@@ -53,8 +53,6 @@ HDFS PATHS:
 =============================================================
 """
 
-import subprocess
-
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, sum as _sum, count, avg, desc
 from pyspark.sql.types import IntegerType
@@ -88,24 +86,31 @@ print("=" * 60)
 #  HELPERS
 # =============================================================
 
+def _get_fs():
+    sc = spark.sparkContext
+    return sc._jvm.org.apache.hadoop.fs.FileSystem.get(sc._jsc.hadoopConfiguration())
+
+def _get_path(path):
+    return spark.sparkContext._jvm.org.apache.hadoop.fs.Path(path)
+
 def hdfs_exists(path):
     """Return True if the HDFS path exists."""
-    r = subprocess.run(
-        ["hdfs", "dfs", "-test", "-e", path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    return r.returncode == 0
-
+    try:
+        return _get_fs().exists(_get_path(path))
+    except Exception:
+        return False
 
 def hdfs_has_data(path):
     """Return True only if the path exists AND contains actual data files (part-*)."""
-    r = subprocess.run(
-        ["hdfs", "dfs", "-ls", path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    if r.returncode != 0:
+    try:
+        fs = _get_fs()
+        p  = _get_path(path)
+        if not fs.exists(p):
+            return False
+        statuses = fs.listStatus(p)
+        return any("part-" in str(s.getPath().getName()) for s in statuses)
+    except Exception:
         return False
-    return any("part-" in line for line in r.stdout.decode('utf-8', errors='replace').splitlines())
 
 
 def read_csv(path, columns):

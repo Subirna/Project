@@ -10,30 +10,20 @@ PURPOSE:
   Import NEW TFL data (2020-2021) from PostgreSQL to HDFS.
   Runs AFTER sqoop_import.sh (full load for 2017-2019) has run.
 
-DATA SPLIT LOGIC (matches sqoop_import.sh):
-  Full load  (sqoop_import.sh) → 2017, 2018, 2019
-  Incremental (this script)    → 2020, 2021
+TWO STRATEGIES:
 
-TWO DIFFERENT STRATEGIES (based on table type):
+  STRATEGY 1 — Year-based (fact_passenger_entry_exit ONLY):
+    fact_passenger_entry_exit has no year column directly.
+    It has date_id which links to dim_date which has year.
+    So we use a subquery:
+      WHERE date_id IN (SELECT date_id FROM dim_date WHERE year IN (2020, 2021))
+    This gets only the new passenger records for 2020-2021.
 
-  STRATEGY 1 — Year-based WHERE clause (for tables with year data):
-    fact_passenger_entry_exit → WHERE year IN (2020, 2021)
-    dim_date                  → WHERE year IN (2020, 2021)
-
-    Why: These tables have data split by year.
-    Full load got 2017-2019. We now get 2020-2021.
-    No watermark needed — year is the split boundary.
-
-  STRATEGY 2 — Watermark from Hive via get_watermark.sh (for static tables):
-    dim_stations      → WHERE created_at > MAX(created_at) in Hive
-    dim_lines         → WHERE created_at > MAX(created_at) in Hive
-    dim_networks      → WHERE created_at > MAX(created_at) in Hive
-    fact_station_lines → WHERE created_at > MAX(created_at) in Hive
-
-    Why: These tables have no year concept.
-         Full load already got ALL rows.
-         Watermark catches any NEW rows added after full load.
-         (e.g. a new station opens, a new line is added)
+  STRATEGY 2 — Full re-import (all other 5 tables):
+    dim_date, dim_lines, dim_networks, dim_stations, fact_station_lines
+    These are re-imported fully every incremental run.
+    Why: if a new station/line/network is added, a full re-import
+    guarantees it is captured. Tables are small so cost is low.
 
 RUN ORDER:
   1. bash sqoop_import.sh               (full load 2017-2019 — ONCE)
@@ -63,9 +53,6 @@ HDFS_FULL = "/tmp/subirna/TFL_project"
 
 # Incremental data lands here (2020-2021)
 HDFS_INC  = "/tmp/subirna/TFL_project/incremental"
-
-# Script that queries Hive for watermark (for static tables only)
-WATERMARK_SCRIPT = "./get_watermark.sh"
 
 # Incremental years — what this script imports
 INCREMENTAL_YEARS = "2020, 2021"
@@ -129,26 +116,14 @@ def run_sqoop(extra_args, table_name):
 
 # =============================================================
 #  STRATEGY 1: YEAR-BASED IMPORT
-#  For tables that have year data: fact_passenger_entry_exit, dim_date
+#  Only for: fact_passenger_entry_exit
 #
-#  Uses --where to filter only 2020-2021 rows.
-#  Simple and clear — year is the split boundary.
-#  No watermark needed.
+#  This table has no year column. It has date_id which links to
+#  dim_date. We filter using a subquery:
+#    WHERE date_id IN (SELECT date_id FROM dim_date WHERE year IN (2020,2021))
 # =============================================================
 
 def import_by_year(table_name, where_clause):
-    """
-    Import rows for 2020-2021 using a WHERE clause.
-
-    For fact_passenger_entry_exit:
-      WHERE date_id IN (SELECT date_id FROM dim_date WHERE year IN (2020,2021))
-
-    For dim_date:
-      WHERE year IN (2020, 2021)
-
-    These rows do not exist in the full load (which has 2017-2019 only),
-    so there is no overlap — clean separation by year.
-    """
     print(f"\n  Year-based import: {table_name}")
     print(f"  Filter: {where_clause}")
 
@@ -161,56 +136,26 @@ def import_by_year(table_name, where_clause):
 
 
 # =============================================================
-#  STRATEGY 2: WATERMARK-BASED IMPORT
+#  STRATEGY 2: FULL RE-IMPORT
 #  For static tables: dim_stations, dim_lines, dim_networks, fact_station_lines
 #
-#  These tables were fully imported in the full load.
-#  Now we only import rows added AFTER the full load ran.
-#  get_watermark.sh asks Hive: "what is MAX(created_at) for this table?"
-#  Sqoop then imports only rows newer than that timestamp.
+#  These reference tables are small and can change at any time
+#  (new station opens, new line added, new network created).
+#  A full re-import is cheap and guarantees we always have the
+#  latest data — no risk of missing newly added rows.
 # =============================================================
 
-def get_watermark(table_name, check_column):
+def import_full(table_name):
     """
-    Call get_watermark.sh to find the latest created_at already in Hive.
-    Returns timestamp string like '2024-01-15 10:30:00'.
-    Falls back to '1970-01-01 00:00:00' if Hive is unreachable.
+    Re-import all rows for a static reference table.
+    Deletes the previous incremental copy and writes a fresh one.
     """
-    result = subprocess.run(
-        ["bash", WATERMARK_SCRIPT, table_name, check_column],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-
-    watermark = "1970-01-01 00:00:00"
-    for line in result.stdout.decode('utf-8', errors='replace').splitlines():
-        if line.startswith("last_value="):
-            watermark = line.split("=", 1)[1].strip()
-            break
-
-    return watermark
-
-
-def import_by_watermark(table_name, check_column):
-    """
-    Import only NEW rows added after the full load using Hive watermark.
-
-    Used for static reference tables (dim_stations, dim_lines, etc.)
-    that have no year column.
-
-    --incremental append : only fetch rows where check_column > watermark
-    --check-column       : created_at (timestamp of when row was inserted)
-    --last-value         : MAX(created_at) from Hive = our watermark
-    """
-    print(f"\n  Watermark-based import: {table_name}")
-    watermark = get_watermark(table_name, check_column)
-    print(f"  Only importing rows where {check_column} > '{watermark}'")
+    print(f"\n  Full re-import: {table_name}")
 
     return run_sqoop([
         "--table",          table_name,
         "--target-dir",     f"{HDFS_INC}/{table_name}",
-        "--incremental",    "append",
-        "--check-column",   check_column,
-        "--last-value",     watermark
+        "--delete-target-dir"
     ], table_name)
 
 
@@ -228,40 +173,26 @@ def main():
 
     results = {}
 
-    # ── STRATEGY 1: Year-based (for tables with year data) ─────
+    # ── STRATEGY 1: Year-based (fact_passenger_entry_exit only) ───
     print("\n" + "=" * 60)
-    print("STRATEGY 1 — Year-based import (2020, 2021)")
-    print("Tables: dim_date, fact_passenger_entry_exit")
+    print("STRATEGY 1 — Year-based import (fact_passenger_entry_exit only)")
+    print("Filter: date_id IN (SELECT date_id FROM dim_date WHERE year IN (2020,2021))")
     print("=" * 60)
 
-    # dim_date: import 2020 and 2021 date records
-    results["dim_date"] = import_by_year(
-        table_name  = "dim_date",
-        where_clause = f"year IN ({INCREMENTAL_YEARS})"
-    )
-
-    # fact_passenger_entry_exit: import 2020-2021 passenger records
-    # Use subquery because the year column is in dim_date, not in this table
     results["fact_passenger_entry_exit"] = import_by_year(
         table_name   = "fact_passenger_entry_exit",
         where_clause = f"date_id IN (SELECT date_id FROM dim_date WHERE year IN ({INCREMENTAL_YEARS}))"
     )
 
-    # ── STRATEGY 2: Watermark-based (for static tables) ────────
+    # ── STRATEGY 2: Full re-import (all other tables) ──────────
     print("\n" + "=" * 60)
-    print("STRATEGY 2 — Watermark-based import (new rows since full load)")
-    print("Tables: dim_lines, dim_networks, dim_stations, fact_station_lines")
-    print("Uses get_watermark.sh to query MAX(created_at) from Hive")
+    print("STRATEGY 2 — Full re-import (all rows)")
+    print("Tables: dim_date, dim_lines, dim_networks, dim_stations, fact_station_lines")
+    print("Reason: small tables, any new entries will always be captured")
     print("=" * 60)
 
-    # These tables were fully imported in sqoop_import.sh.
-    # The watermark catches any new rows added AFTER that full load.
-    # (e.g. a new Elizabeth line station opened, a new line was added)
-    for table_name in ["dim_lines", "dim_networks", "dim_stations", "fact_station_lines"]:
-        results[table_name] = import_by_watermark(
-            table_name    = table_name,
-            check_column  = "created_at"
-        )
+    for table_name in ["dim_date", "dim_lines", "dim_networks", "dim_stations", "fact_station_lines"]:
+        results[table_name] = import_full(table_name)
 
     # ── Verify HDFS ─────────────────────────────────────────────
     print("\n[VERIFY] HDFS incremental directory:")
@@ -274,12 +205,12 @@ def main():
     print(f"{'Table':<35} {'Strategy':<22} {'Status'}")
     print("─" * 60)
     strategies = {
-        "dim_date":                   "year IN (2020,2021)",
-        "fact_passenger_entry_exit":  "year IN (2020,2021)",
-        "dim_lines":                  "watermark (created_at)",
-        "dim_networks":               "watermark (created_at)",
-        "dim_stations":               "watermark (created_at)",
-        "fact_station_lines":         "watermark (created_at)",
+        "fact_passenger_entry_exit":  "year-based via dim_date",
+        "dim_date":                   "full re-import",
+        "dim_lines":                  "full re-import",
+        "dim_networks":               "full re-import",
+        "dim_stations":               "full re-import",
+        "fact_station_lines":         "full re-import",
     }
     for table, status in results.items():
         flag = "OK" if status else "FAILED"

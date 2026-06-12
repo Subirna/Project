@@ -298,13 +298,11 @@ pipeline {
         // ======================================================
         //  STAGE 11: INCREMENTAL — SQOOP  ← INCREMENTAL ONLY
         //
-        //  Uttam's approach applied to ALL 6 tables:
-        //    For each table:
-        //      1. get_watermark.sh queries Hive MAX(created_at)
-        //      2. Sqoop imports only rows newer than that watermark
-        //
-        //  Uses incremental_sqoop.py which internally calls
-        //  get_watermark.sh for each of the 6 tables.
+        //  Two strategies:
+        //    fact_passenger_entry_exit → year-based filter via dim_date
+        //      (date_id IN (SELECT date_id FROM dim_date WHERE year IN (2020,2021)))
+        //    All other 5 tables → full re-import
+        //      (small tables, ensures new stations/lines are always captured)
         //
         //  Only runs when LOAD_MODE = incremental
         // ======================================================
@@ -330,11 +328,10 @@ pipeline {
         // ======================================================
         //  STAGE 12: INCREMENTAL — SPARK  ← INCREMENTAL ONLY
         //
-        //  Reads BOTH:
-        //    - Full load data  (/tmp/subirna/TFL_project/)
-        //    - Incremental data (/tmp/subirna/TFL_project/incremental/)
-        //  Unions them and overwrites all 7 gold tables with
-        //  updated results that include the new rows.
+        //  Reads incremental data (/tmp/subirna/TFL_project/incremental/)
+        //  and merges with existing gold tables:
+        //    fact_passenger_entry_exit (2020-2021) → updates all 7 gold tables
+        //    dim_* and fact_station_lines (full re-import) → used for joins
         //
         //  Only runs when LOAD_MODE = incremental
         // ======================================================
@@ -344,13 +341,12 @@ pipeline {
             }
             steps {
                 echo '========================================='
-                echo 'Stage 12: Incremental Spark (merges full + new, updates gold)'
+                echo 'Stage 12: Incremental Spark (updates gold tables)'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "spark-submit --master local[*] ${PROJECT_DIR}/incremental_spark.py" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+                        "spark-submit --master local[*] ${PROJECT_DIR}/incremental_spark.py 2>&1 | grep -v 'ITC Big Data Lab' | grep -v 'Commands:' | grep -v 'HDFS home:' | grep -v '━'; exit \${PIPESTATUS[0]}"
 
                     echo "Incremental Spark completed"
                 '''

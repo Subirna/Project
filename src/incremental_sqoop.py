@@ -100,7 +100,9 @@ def run_sqoop(extra_args, table_name):
     print(f"  Command: {' '.join(cmd)}")
     print(f"{'─'*60}")
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Stream sqoop output directly to the console (no PIPE capture) so Jenkins
+    # shows live progress and the job does not appear to hang.
+    result = subprocess.run(cmd)
 
     if result.returncode == 0:
         target_path = f"{HDFS_INC}/{table_name}"
@@ -121,8 +123,7 @@ def run_sqoop(extra_args, table_name):
         print(f"  SUCCESS: {table_name} → {target_path}")
         return True
     else:
-        print(f"  FAILED : {table_name}")
-        print("  Error  :", result.stderr.decode('utf-8', errors='replace')[-1500:])
+        print(f"  FAILED : {table_name} (see sqoop output above for details)")
         return False
 
 

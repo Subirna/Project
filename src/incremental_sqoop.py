@@ -103,7 +103,22 @@ def run_sqoop(extra_args, table_name):
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     if result.returncode == 0:
-        print(f"  SUCCESS: {table_name} → {HDFS_INC}/{table_name}")
+        target_path = f"{HDFS_INC}/{table_name}"
+        # Sqoop exits 0 even when 0 rows match (e.g. --delete-target-dir removes the
+        # existing dir but no new dir is created for an empty result set).  Create an
+        # empty marker directory so incremental_spark.py can tell the difference between
+        # "sqoop never ran" and "sqoop ran but found no new rows".
+        hdfs_check = subprocess.run(
+            ["hdfs", "dfs", "-test", "-e", target_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        if hdfs_check.returncode != 0:
+            print(f"  NOTE: {table_name} — sqoop succeeded but 0 rows matched (no new data)")
+            subprocess.run(
+                ["hdfs", "dfs", "-mkdir", "-p", target_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        print(f"  SUCCESS: {table_name} → {target_path}")
         return True
     else:
         print(f"  FAILED : {table_name}")

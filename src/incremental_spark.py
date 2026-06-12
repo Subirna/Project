@@ -97,6 +97,17 @@ def hdfs_exists(path):
     return r.returncode == 0
 
 
+def hdfs_has_data(path):
+    """Return True only if the path exists AND contains actual data files (part-*)."""
+    r = subprocess.run(
+        ["hdfs", "dfs", "-ls", path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    if r.returncode != 0:
+        return False
+    return any("part-" in line for line in r.stdout.decode('utf-8', errors='replace').splitlines())
+
+
 def read_csv(path, columns):
     return (
         spark.read
@@ -140,12 +151,21 @@ print("\n[STEP 1] Loading ONLY incremental raw data (2020-2021)...")
 print(f"Reading from: {HDFS_INC}")
 print("NOT reading full load data — gold tables already have 2017-2019 results")
 
-# Guard: if the main fact table is missing, sqoop hasn't run yet
-if not hdfs_exists(f"{HDFS_INC}/fact_passenger_entry_exit"):
-    print(f"\nERROR: Incremental HDFS data not found at {HDFS_INC}/fact_passenger_entry_exit")
+# Guard: distinguish "sqoop never ran" (directory absent) from
+# "sqoop ran but found 0 new rows" (empty marker directory created by incremental_sqoop.py).
+_fact_inc_path = f"{HDFS_INC}/fact_passenger_entry_exit"
+if not hdfs_exists(_fact_inc_path):
+    print(f"\nERROR: Incremental HDFS data not found at {_fact_inc_path}")
     print("Please run incremental_sqoop.py first, then re-run this script.")
     spark.stop()
     exit(1)
+
+if not hdfs_has_data(_fact_inc_path):
+    print(f"\nINFO: No new passenger records found for this incremental run.")
+    print("Sqoop ran successfully but 0 rows matched the year filter.")
+    print("Gold tables are already up to date — nothing to process.")
+    spark.stop()
+    exit(0)
 
 # New fact data — ONLY 2020-2021 rows (imported by incremental_sqoop.py)
 fact_pax_new = read_csv(f"{HDFS_INC}/fact_passenger_entry_exit", [

@@ -214,9 +214,18 @@ print(f"  New station-line records          : {fact_lines_new.count()}")
 # =============================================================
 
 def read_gold(table_name):
-    """Read existing gold table from HDFS parquet."""
+    """Read existing gold table from HDFS parquet.
+
+    Cache + count forces materialization into memory BEFORE save_gold
+    can overwrite (and delete) the same source files.  Without this,
+    Spark's lazy evaluation causes FileNotFoundException: the overwrite
+    deletes the old part files first, then the read plan tries to open them.
+    """
     path = f"{GOLD_BASE}/{table_name}"
-    return spark.read.parquet(path)
+    df = spark.read.parquet(path)
+    df.cache()
+    df.count()  # trigger cache — now the data is in memory, safe to overwrite the source
+    return df
 
 def save_gold(df, table_name):
     """Write updated gold table to HDFS."""

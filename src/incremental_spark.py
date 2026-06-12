@@ -53,6 +53,8 @@ HDFS PATHS:
 =============================================================
 """
 
+import subprocess
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, sum as _sum, count, avg, desc
 from pyspark.sql.types import IntegerType
@@ -69,6 +71,7 @@ spark.sparkContext.setLogLevel("WARN")
 # =============================================================
 
 HDFS_INC  = "/tmp/subirna/TFL_project/incremental"  # new data only (2020-2021)
+HDFS_FULL = "/tmp/subirna/TFL_project"              # full load data (2017-2019)
 GOLD_BASE = "/tmp/subirna/TFL_project/gold"          # existing gold tables
 HIVE_DB   = "subirna_tfl"
 
@@ -82,8 +85,17 @@ print("=" * 60)
 
 
 # =============================================================
-#  HELPER: Read CSV from HDFS
+#  HELPERS
 # =============================================================
+
+def hdfs_exists(path):
+    """Return True if the HDFS path exists."""
+    r = subprocess.run(
+        ["hdfs", "dfs", "-test", "-e", path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    return r.returncode == 0
+
 
 def read_csv(path, columns):
     return (
@@ -93,6 +105,27 @@ def read_csv(path, columns):
         .csv(path)
         .toDF(*columns)
     )
+
+
+def read_csv_with_fallback(table_name, columns):
+    """
+    Read a dimension/static table from incremental path if it exists
+    (meaning sqoop found genuinely new rows), otherwise fall back to
+    the full load path.  These reference tables (dim_lines, dim_stations,
+    etc.) need ALL rows for joins — not just new ones.
+    """
+    inc_path  = f"{HDFS_INC}/{table_name}"
+    full_path = f"{HDFS_FULL}/{table_name}"
+    if hdfs_exists(inc_path):
+        print(f"  {table_name}: reading from incremental path (new rows found)")
+        return read_csv(inc_path, columns)
+    elif hdfs_exists(full_path):
+        print(f"  {table_name}: no new rows — using full load reference data")
+        return read_csv(full_path, columns)
+    else:
+        print(f"  ERROR: {table_name} not found in incremental or full load path")
+        spark.stop()
+        exit(1)
 
 
 # =============================================================
@@ -107,25 +140,12 @@ print("\n[STEP 1] Loading ONLY incremental raw data (2020-2021)...")
 print(f"Reading from: {HDFS_INC}")
 print("NOT reading full load data — gold tables already have 2017-2019 results")
 
-# New dimension data (fresh re-import from incremental_sqoop.py)
-dim_date = read_csv(f"{HDFS_INC}/dim_date", [
-    "date_id","year","quarter","month","is_annual",
-    "period_label","period_start","period_end","created_at"
-])
-
-dim_lines = read_csv(f"{HDFS_INC}/dim_lines", [
-    "line_id","line_name","line_color","is_night_service","created_at","updated_at"
-])
-
-dim_networks = read_csv(f"{HDFS_INC}/dim_networks", [
-    "network_id","network_name","network_type","created_at","updated_at"
-])
-
-dim_stations = read_csv(f"{HDFS_INC}/dim_stations", [
-    "station_id","nlc_code","station_name","network_id",
-    "has_london_underground","has_elizabeth_line","has_overground",
-    "has_dlr","has_night_tube","is_active","created_at","updated_at"
-])
+# Guard: if the main fact table is missing, sqoop hasn't run yet
+if not hdfs_exists(f"{HDFS_INC}/fact_passenger_entry_exit"):
+    print(f"\nERROR: Incremental HDFS data not found at {HDFS_INC}/fact_passenger_entry_exit")
+    print("Please run incremental_sqoop.py first, then re-run this script.")
+    spark.stop()
+    exit(1)
 
 # New fact data — ONLY 2020-2021 rows (imported by incremental_sqoop.py)
 fact_pax_new = read_csv(f"{HDFS_INC}/fact_passenger_entry_exit", [
@@ -133,7 +153,29 @@ fact_pax_new = read_csv(f"{HDFS_INC}/fact_passenger_entry_exit", [
     "estimated_entries","estimated_exits","record_type","data_source","created_at"
 ])
 
-fact_lines_new = read_csv(f"{HDFS_INC}/fact_station_lines", [
+# dim_date incremental path always exists (year-based import in sqoop)
+dim_date = read_csv(f"{HDFS_INC}/dim_date", [
+    "date_id","year","quarter","month","is_annual",
+    "period_label","period_start","period_end","created_at"
+])
+
+# Reference/static tables: fall back to full load path if no new rows were imported
+# (watermark-based import only creates incremental dir when genuinely new rows exist)
+dim_lines = read_csv_with_fallback("dim_lines", [
+    "line_id","line_name","line_color","is_night_service","created_at","updated_at"
+])
+
+dim_networks = read_csv_with_fallback("dim_networks", [
+    "network_id","network_name","network_type","created_at","updated_at"
+])
+
+dim_stations = read_csv_with_fallback("dim_stations", [
+    "station_id","nlc_code","station_name","network_id",
+    "has_london_underground","has_elizabeth_line","has_overground",
+    "has_dlr","has_night_tube","is_active","created_at","updated_at"
+])
+
+fact_lines_new = read_csv_with_fallback("fact_station_lines", [
     "station_line_id","station_id","line_id","is_interchange",
     "effective_from","effective_to","created_at"
 ])

@@ -100,14 +100,14 @@ def run_sqoop(extra_args, table_name):
     print(f"  Command: {' '.join(cmd)}")
     print(f"{'─'*60}")
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     if result.returncode == 0:
         print(f"  SUCCESS: {table_name} → {HDFS_INC}/{table_name}")
         return True
     else:
         print(f"  FAILED : {table_name}")
-        print("  Error  :", result.stderr[-1500:])
+        print("  Error  :", result.stderr.decode('utf-8', errors='replace')[-1500:])
         return False
 
 
@@ -162,11 +162,11 @@ def get_watermark(table_name, check_column):
     """
     result = subprocess.run(
         ["bash", WATERMARK_SCRIPT, table_name, check_column],
-        capture_output=True, text=True
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 
     watermark = "1970-01-01 00:00:00"
-    for line in result.stdout.splitlines():
+    for line in result.stdout.decode('utf-8', errors='replace').splitlines():
         if line.startswith("last_value="):
             watermark = line.split("=", 1)[1].strip()
             break

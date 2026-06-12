@@ -106,10 +106,6 @@ pipeline {
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
                     sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        src/get_watermark.sh ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/ 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
-
-                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         src/incremental_sqoop.py ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/ 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
@@ -319,7 +315,6 @@ pipeline {
             steps {
                 echo '========================================='
                 echo 'Stage 11: Incremental Sqoop (all 6 tables, new rows only)'
-                echo 'get_watermark.sh will query Hive per table'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \

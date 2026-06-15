@@ -54,8 +54,8 @@ HDFS PATHS:
 """
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, sum as _sum, count, avg, desc
-from pyspark.sql.types import IntegerType
+from pyspark.sql.functions import col, sum as _sum, count, avg, desc, current_timestamp, lit
+from pyspark.sql.types import IntegerType, StringType, TimestampType, StructType, StructField
 
 spark = SparkSession.builder \
     .appName("TFL_Incremental_Spark_Subirna") \
@@ -235,59 +235,134 @@ def save_gold(df, table_name):
 
 
 # =============================================================
-#  STEP 3: STRATEGY 1 — APPEND (year-based gold tables)
+#  STEP 3: WATERMARK CHECK — fact_passenger_entry_exit
 #
-#  For gold tables where years do NOT overlap between
-#  full load (2017-2019) and incremental (2020-2021).
+#  Before touching any year-based gold tables, consult the
+#  incremental_watermark table to find which years of
+#  fact_passenger_entry_exit have already been processed.
 #
-#  Just calculate new year results and APPEND to gold table.
-#  No risk of duplicates because years are different.
+#  If a year is already recorded in the watermark → SKIP IT.
+#  Only truly new years are appended to gold tables.
+#  After a successful save, the watermark is updated.
+#
+#  Watermark table schema:
+#    source_table  STRING   — which fact table was loaded
+#    processed_year INT     — the year that was processed
+#    processed_at  TIMESTAMP — when it was loaded
 # =============================================================
 
-print("\n[STEP 3] STRATEGY 1 — Append new year results to gold tables")
-print("(years 2020-2021 don't exist in old gold → safe to append)")
+print("\n[STEP 3] WATERMARK CHECK — fact_passenger_entry_exit")
 
-# ── gold_passengers_by_year ────────────────────────────────────────────────────
-# Old gold has: 2017, 2018, 2019 rows
-# New result:   2020, 2021 rows
-# Append → gold table now has all 5 years, no duplicates
-print("\n--- gold_passengers_by_year ---")
-
-new_passengers_by_year = (
-    fact_pax_new
-    .join(dim_date, "date_id")
-    .groupBy("year")
-    .agg(_sum("total_entry_exit").alias("total_passengers"))
-    .orderBy("year")
-)
-new_passengers_by_year.show(truncate=False)
-
-# Read existing gold + append new years
-existing = read_gold("gold_passengers_by_year")
-updated  = existing.union(new_passengers_by_year).orderBy("year")
-save_gold(updated, "gold_passengers_by_year")
-
-# ── gold_quarterly_trend ───────────────────────────────────────────────────────
-# Old gold has: Q1-Q4 of 2017, 2018, 2019
-# New result:   Q1-Q4 of 2020, 2021
-# No year overlap → safe to append
-print("\n--- gold_quarterly_trend ---")
-
-new_quarterly_trend = (
-    fact_pax_new
-    .join(dim_date, "date_id")
-    .groupBy(
-        col("year").cast(IntegerType()),
-        col("quarter").cast(IntegerType())
+# Create the watermark table once if it doesn't exist yet
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {HIVE_DB}.incremental_watermark (
+        source_table   STRING,
+        processed_year INT,
+        processed_at   TIMESTAMP
     )
-    .agg(_sum("total_entry_exit").alias("total_passengers"))
-    .orderBy("year", "quarter")
-)
-new_quarterly_trend.show(truncate=False)
+    STORED AS PARQUET
+""")
 
-existing = read_gold("gold_quarterly_trend")
-updated  = existing.union(new_quarterly_trend).orderBy("year", "quarter")
-save_gold(updated, "gold_quarterly_trend")
+# Which years have already been loaded for this fact table?
+already_done_df = spark.sql(f"""
+    SELECT processed_year
+    FROM   {HIVE_DB}.incremental_watermark
+    WHERE  source_table = 'fact_passenger_entry_exit'
+""")
+already_done_years = [r["processed_year"] for r in already_done_df.collect()]
+print(f"  Watermark — years already processed : {already_done_years}")
+
+# Which years are in the current incremental batch?
+incoming_years_df = (
+    fact_pax_new
+    .join(dim_date, "date_id")
+    .select(col("year").cast(IntegerType()).alias("year"))
+    .distinct()
+)
+incoming_years = [r["year"] for r in incoming_years_df.collect()]
+print(f"  Incoming batch years                : {incoming_years}")
+
+# Only process years that have NOT been loaded before
+years_to_process = [y for y in incoming_years if y not in already_done_years]
+print(f"  Years to load (new only)            : {years_to_process}")
+
+if not years_to_process:
+    print("\n  All years in this batch are already in the watermark.")
+    print("  Skipping Strategy 1 gold tables (gold_passengers_by_year, gold_quarterly_trend).")
+    print("  Strategy 2 (cross-year aggregates) will still run.\n")
+
+# Filter the fact data down to only the new years before Strategy 1
+fact_pax_new_filtered = (
+    fact_pax_new
+    .join(dim_date, "date_id")
+    .filter(col("year").cast(IntegerType()).isin(years_to_process))
+) if years_to_process else None
+
+
+# =============================================================
+#  STEP 4: STRATEGY 1 — APPEND year-based gold tables
+#
+#  Only runs for years NOT already recorded in the watermark.
+#  After a successful save the watermark is updated so that
+#  re-running this pipeline will skip those years next time.
+# =============================================================
+
+print("\n[STEP 4] STRATEGY 1 — Append new year results to gold tables")
+
+if years_to_process:
+
+    # ── gold_passengers_by_year ──────────────────────────────────────────────
+    print("\n--- gold_passengers_by_year ---")
+
+    new_passengers_by_year = (
+        fact_pax_new_filtered
+        .groupBy("year")
+        .agg(_sum("total_entry_exit").alias("total_passengers"))
+        .orderBy("year")
+    )
+    new_passengers_by_year.show(truncate=False)
+
+    existing = read_gold("gold_passengers_by_year")
+    updated  = existing.union(new_passengers_by_year).orderBy("year")
+    save_gold(updated, "gold_passengers_by_year")
+
+    # ── gold_quarterly_trend ─────────────────────────────────────────────────
+    print("\n--- gold_quarterly_trend ---")
+
+    new_quarterly_trend = (
+        fact_pax_new_filtered
+        .groupBy(
+            col("year").cast(IntegerType()),
+            col("quarter").cast(IntegerType())
+        )
+        .agg(_sum("total_entry_exit").alias("total_passengers"))
+        .orderBy("year", "quarter")
+    )
+    new_quarterly_trend.show(truncate=False)
+
+    existing = read_gold("gold_quarterly_trend")
+    updated  = existing.union(new_quarterly_trend).orderBy("year", "quarter")
+    save_gold(updated, "gold_quarterly_trend")
+
+    # ── UPDATE WATERMARK ─────────────────────────────────────────────────────
+    # Record every newly processed year so the next pipeline run skips them.
+    print(f"\n  Updating watermark with years: {years_to_process}")
+    watermark_schema = StructType([
+        StructField("source_table",   StringType(),    False),
+        StructField("processed_year", IntegerType(),   False),
+    ])
+    new_watermark_rows = (
+        spark.createDataFrame(
+            [("fact_passenger_entry_exit", int(y)) for y in years_to_process],
+            watermark_schema
+        )
+        .withColumn("processed_at", current_timestamp())
+    )
+    new_watermark_rows.write.mode("append").insertInto(f"{HIVE_DB}.incremental_watermark")
+    print(f"  Watermark updated — years {years_to_process} marked as done.")
+
+else:
+    print("  [SKIP] No new years to process — Strategy 1 gold tables unchanged.")
 
 
 # =============================================================
@@ -310,7 +385,7 @@ save_gold(updated, "gold_quarterly_trend")
 #    Union → re-SUM → King's Cross = 700M  ← correct all-years total
 # =============================================================
 
-print("\n[STEP 4] STRATEGY 2 — Merge new results into cross-year gold tables")
+print("\n[STEP 5] STRATEGY 2 — Merge new results into cross-year gold tables")
 print("(read old gold + calculate new → union → re-aggregate)")
 
 # ── gold_busiest_stations ──────────────────────────────────────────────────────
@@ -383,14 +458,22 @@ updated.show(truncate=False)
 save_gold(updated, "gold_passengers_by_network")
 
 # ── gold_interchange_stations ──────────────────────────────────────────────────
-# Station-line mappings don't change by year — just refresh from new fact_lines
+# Merge old gold with new mapping so stations not in the latest batch are kept.
 print("\n--- gold_interchange_stations ---")
 
-updated_interchange = (
+new_interchange = (
     fact_lines_new
     .join(dim_stations, "station_id")
     .groupBy("station_name")
     .agg(count("line_id").alias("num_lines"))
+)
+
+existing = read_gold("gold_interchange_stations")
+# New batch wins for any station it covers; old gold keeps all others.
+new_station_names = [r["station_name"] for r in new_interchange.select("station_name").collect()]
+updated_interchange = (
+    existing.filter(~col("station_name").isin(new_station_names))
+    .union(new_interchange)
     .orderBy(desc("num_lines"))
     .limit(15)
 )
@@ -433,12 +516,17 @@ save_gold(updated, "gold_night_tube_analysis")
 print("\n" + "=" * 60)
 print("TRULY INCREMENTAL SPARK PIPELINE COMPLETE")
 print("=" * 60)
-print("Only processed: 2020-2021 data (incremental)")
-print("Did NOT re-read: 2017-2019 data (full load)")
+print(f"Watermark check  : {already_done_years} already done, {years_to_process} newly loaded")
+print("Did NOT re-read  : full load data (already in gold tables)")
 print("")
-print("Strategy 1 — Append (year-based, no overlap):")
-print("  gold_passengers_by_year  ← appended 2020, 2021 rows")
-print("  gold_quarterly_trend     ← appended 2020, 2021 quarters")
+print("Strategy 1 — Watermark-gated append (year-based):")
+if years_to_process:
+    print(f"  gold_passengers_by_year  ← appended years {years_to_process}")
+    print(f"  gold_quarterly_trend     ← appended quarters for {years_to_process}")
+    print(f"  incremental_watermark    ← updated with years {years_to_process}")
+else:
+    print("  gold_passengers_by_year  ← SKIPPED (all years already in watermark)")
+    print("  gold_quarterly_trend     ← SKIPPED (all years already in watermark)")
 print("")
 print("Strategy 2 — Merge (cross-year aggregates):")
 print("  gold_busiest_stations    ← re-summed with new station totals")

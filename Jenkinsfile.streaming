@@ -1,0 +1,303 @@
+pipeline {
+    agent any
+
+    // ==========================================================
+    //  TFL REALTIME STREAMING PIPELINE — Subirna
+    //
+    //  This is a SEPARATE Jenkinsfile from the batch pipeline.
+    //  Batch pipeline (full load + incremental) → Jenkinsfile
+    //  Streaming pipeline (real-time Kafka + HBase) → THIS FILE
+    //
+    //  What this does:
+    //    1. Copies streaming scripts to the Cloudera edge node
+    //    2. Creates HBase table (subirna_tfl_arrivals) if not exists
+    //    3. Stops any previously running producer/consumer
+    //    4. Starts producer: TFL API → Kafka topic subirna_tfl_arrivals
+    //    5. Starts consumer: Kafka → HBase table subirna_tfl_arrivals
+    //    6. Verifies both processes are running
+    //
+    //  The producer and consumer run as BACKGROUND PROCESSES
+    //  (nohup) — Jenkins starts them and then finishes.
+    //  They keep running on the server until stopped.
+    //
+    //  To STOP streaming: use the "Stop Streaming" pipeline or
+    //  SSH to server and run:
+    //    pkill -f send_data_to_kafka.py
+    //    pkill -f write_kafka_to_hbase.py
+    // ==========================================================
+
+    environment {
+        REMOTE_HOST      = '13.41.167.97'
+        REMOTE_USER      = 'consultant'
+        REMOTE_PASSWORD  = 'Cl0ud3ra@2026#Secur3!'
+        PROJECT_DIR      = '/home/consultant/subirna/TFL_Project'
+        KAFKA_BROKER     = 'ip-172-31-6-42.eu-west-2.compute.internal:9092'
+        KAFKA_TOPIC      = 'subirna_tfl_arrivals'
+        HBASE_TABLE      = 'subirna_tfl_arrivals'
+        PRODUCER_LOG     = '/tmp/subirna_producer.log'
+        CONSUMER_LOG     = '/tmp/subirna_consumer.log'
+    }
+
+    stages {
+
+        // ======================================================
+        //  STAGE 1: GIT CHECKOUT
+        // ======================================================
+        stage('Checkout') {
+            steps {
+                echo '========================================='
+                echo 'Stage 1: Git Checkout'
+                echo '========================================='
+                checkout scm
+                sh 'git log -1 --oneline'
+            }
+        }
+
+        // ======================================================
+        //  STAGE 2: PREPARE REMOTE DIRECTORY
+        //  Creates the streaming scripts folder on Cloudera.
+        // ======================================================
+        stage('Prepare Remote Directory') {
+            steps {
+                echo '========================================='
+                echo 'Stage 2: Create Streaming Directory on Cloudera'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "mkdir -p ${PROJECT_DIR}/streaming" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Directory ready: ${PROJECT_DIR}/streaming"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 3: COPY STREAMING SCRIPTS TO CLOUDERA
+        //  Copies producer and consumer scripts to the server.
+        // ======================================================
+        stage('Copy Streaming Scripts') {
+            steps {
+                echo '========================================='
+                echo 'Stage 3: Copy send_data_to_kafka.py and write_kafka_to_hbase.py'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/streaming/send_data_to_kafka.py \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/streaming/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/streaming/write_kafka_to_hbase.py \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/streaming/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Scripts copied to ${PROJECT_DIR}/streaming/"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 4: CREATE KAFKA TOPIC (IF NOT EXISTS)
+        //  Creates subirna_tfl_arrivals topic on Kafka.
+        //  Safe to run even if topic already exists.
+        // ======================================================
+        stage('Create Kafka Topic') {
+            steps {
+                echo '========================================='
+                echo 'Stage 4: Create Kafka Topic — subirna_tfl_arrivals'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "kafka-topics --bootstrap-server ${KAFKA_BROKER} \
+                            --create --if-not-exists \
+                            --topic ${KAFKA_TOPIC} \
+                            --partitions 1 \
+                            --replication-factor 1 2>&1 | grep -v 'WARN' || true" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Kafka topic ready: ${KAFKA_TOPIC}"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 5: CREATE HBASE TABLE (IF NOT EXISTS)
+        //  Creates subirna_tfl_arrivals table with column family 'cf'.
+        //  If table already exists, the create command fails silently.
+        // ======================================================
+        stage('Create HBase Table') {
+            steps {
+                echo '========================================='
+                echo 'Stage 5: Create HBase Table — subirna_tfl_arrivals'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "echo \"create '${HBASE_TABLE}', 'cf'\" | hbase shell -n 2>&1 | tail -5" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "HBase table ready: ${HBASE_TABLE}"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 6: STOP OLD PROCESSES
+        //  Kills any previously running producer/consumer.
+        //  This makes the pipeline idempotent — safe to re-run.
+        // ======================================================
+        stage('Stop Old Processes') {
+            steps {
+                echo '========================================='
+                echo 'Stage 6: Stop Any Previously Running Producer / Consumer'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "pkill -f send_data_to_kafka.py 2>/dev/null && echo 'Stopped old producer' || echo 'No producer was running'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "pkill -f write_kafka_to_hbase.py 2>/dev/null && echo 'Stopped old consumer' || echo 'No consumer was running'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sleep 3
+                    echo "Old processes stopped"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 7: START PRODUCER
+        //
+        //  Starts send_data_to_kafka.py as a background process.
+        //  nohup keeps it running after Jenkins disconnects.
+        //  Logs go to /tmp/subirna_producer.log on the server.
+        //
+        //  Producer polls TFL API every 30 seconds and sends
+        //  all Victoria line arrival predictions to Kafka topic
+        //  subirna_tfl_arrivals.
+        // ======================================================
+        stage('Start Producer') {
+            steps {
+                echo '========================================='
+                echo 'Stage 7: Start TFL → Kafka Producer'
+                echo 'Polls TFL API every 30s → topic: subirna_tfl_arrivals'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "nohup python3 ${PROJECT_DIR}/streaming/send_data_to_kafka.py \
+                            > ${PRODUCER_LOG} 2>&1 &
+                         echo Producer PID: \$!" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sleep 5
+                    echo "Producer started"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 8: START CONSUMER
+        //
+        //  Starts write_kafka_to_hbase.py as a background process.
+        //  Reads from Kafka topic subirna_tfl_arrivals and writes
+        //  each message to HBase table subirna_tfl_arrivals.
+        //  Logs go to /tmp/subirna_consumer.log on the server.
+        // ======================================================
+        stage('Start Consumer') {
+            steps {
+                echo '========================================='
+                echo 'Stage 8: Start Kafka → HBase Consumer'
+                echo 'Reads topic: subirna_tfl_arrivals → HBase: subirna_tfl_arrivals'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "nohup python3 ${PROJECT_DIR}/streaming/write_kafka_to_hbase.py \
+                            > ${CONSUMER_LOG} 2>&1 &
+                         echo Consumer PID: \$!" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    sleep 5
+                    echo "Consumer started"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 9: VERIFY BOTH PROCESSES ARE RUNNING
+        //  Shows the process list and first lines of each log.
+        // ======================================================
+        stage('Verify Streaming Is Running') {
+            steps {
+                echo '========================================='
+                echo 'Stage 9: Verify Producer and Consumer Are Running'
+                echo '========================================='
+                sh '''
+                    echo "--- Running processes ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "ps aux | grep -E 'send_data_to_kafka|write_kafka_to_hbase' | grep -v grep" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo ""
+                    echo "--- Producer log (last 5 lines) ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "tail -5 ${PRODUCER_LOG} 2>/dev/null || echo 'Producer log not found'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo ""
+                    echo "--- Consumer log (last 5 lines) ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "tail -5 ${CONSUMER_LOG} 2>/dev/null || echo 'Consumer log not found'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+                '''
+            }
+        }
+
+    }
+
+    // ==========================================================
+    //  POST ACTIONS
+    // ==========================================================
+    post {
+        success {
+            echo '========================================='
+            echo 'TFL STREAMING PIPELINE DEPLOYED SUCCESSFULLY'
+            echo ''
+            echo 'Both processes are now running on the Cloudera server.'
+            echo ''
+            echo "Producer : TFL API → Kafka topic ${KAFKA_TOPIC}"
+            echo "Consumer : Kafka → HBase table ${HBASE_TABLE}"
+            echo ''
+            echo "Producer log : ${PRODUCER_LOG}"
+            echo "Consumer log : ${CONSUMER_LOG}"
+            echo ''
+            echo 'To check status (SSH to server):'
+            echo "  ps aux | grep -E 'send_data_to_kafka|write_kafka_to_hbase'"
+            echo "  tail -f ${PRODUCER_LOG}"
+            echo "  tail -f ${CONSUMER_LOG}"
+            echo ''
+            echo 'To stop streaming:'
+            echo '  pkill -f send_data_to_kafka.py'
+            echo '  pkill -f write_kafka_to_hbase.py'
+            echo '========================================='
+        }
+        failure {
+            echo '========================================='
+            echo 'TFL STREAMING PIPELINE FAILED — check logs above'
+            echo '========================================='
+        }
+        always {
+            echo 'Streaming pipeline execution completed'
+        }
+    }
+}

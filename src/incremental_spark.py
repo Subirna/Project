@@ -216,16 +216,24 @@ print(f"  New station-line records          : {fact_lines_new.count()}")
 def read_gold(table_name):
     """Read existing gold table from HDFS parquet.
 
-    Cache + count forces materialization into memory BEFORE save_gold
-    can overwrite (and delete) the same source files.  Without this,
-    Spark's lazy evaluation causes FileNotFoundException: the overwrite
-    deletes the old part files first, then the read plan tries to open them.
+    Returns None if the path has no data (first run, or full load never wrote it).
+    Cache + count forces materialization into memory BEFORE save_gold can overwrite.
     """
     path = f"{GOLD_BASE}/{table_name}"
+    if not hdfs_has_data(path):
+        print(f"  {table_name}: no existing data — will create fresh")
+        return None
     df = spark.read.parquet(path)
     df.cache()
-    df.count()  # trigger cache — now the data is in memory, safe to overwrite the source
+    df.count()
     return df
+
+
+def merge_with_gold(existing, new_df):
+    """Union new data with existing gold. If gold is empty/missing, return new data only."""
+    if existing is None:
+        return new_df
+    return existing.union(new_df)
 
 def save_gold(df, table_name):
     """Write updated gold table to HDFS."""
@@ -324,7 +332,7 @@ if years_to_process:
     new_passengers_by_year.show(truncate=False)
 
     existing = read_gold("gold_passengers_by_year")
-    updated  = existing.union(new_passengers_by_year).orderBy("year")
+    updated  = merge_with_gold(existing, new_passengers_by_year).orderBy("year")
     save_gold(updated, "gold_passengers_by_year")
 
     # ── gold_quarterly_trend ─────────────────────────────────────────────────
@@ -342,7 +350,7 @@ if years_to_process:
     new_quarterly_trend.show(truncate=False)
 
     existing = read_gold("gold_quarterly_trend")
-    updated  = existing.union(new_quarterly_trend).orderBy("year", "quarter")
+    updated  = merge_with_gold(existing, new_quarterly_trend).orderBy("year", "quarter")
     save_gold(updated, "gold_quarterly_trend")
 
     # ── UPDATE WATERMARK ─────────────────────────────────────────────────────
@@ -403,7 +411,7 @@ new_station_totals = (
 # Read old gold (has 2017-2019 totals) + union with new (2020-2021 totals)
 # Then re-SUM by station to get the combined all-years total
 existing = read_gold("gold_busiest_stations")
-merged   = existing.union(new_station_totals)
+merged   = merge_with_gold(existing, new_station_totals)
 updated  = (
     merged
     .groupBy("station_name")
@@ -426,7 +434,7 @@ new_by_line = (
 )
 
 existing = read_gold("gold_passengers_by_line")
-merged   = existing.union(new_by_line)
+merged   = merge_with_gold(existing, new_by_line)
 updated  = (
     merged
     .groupBy("line_name")
@@ -448,7 +456,7 @@ new_by_network = (
 )
 
 existing = read_gold("gold_passengers_by_network")
-merged   = existing.union(new_by_network)
+merged   = merge_with_gold(existing, new_by_network)
 updated  = (
     merged
     .groupBy("network_name", "network_type")
@@ -472,12 +480,15 @@ new_interchange = (
 existing = read_gold("gold_interchange_stations")
 # New batch wins for any station it covers; old gold keeps all others.
 new_station_names = [r["station_name"] for r in new_interchange.select("station_name").collect()]
-updated_interchange = (
-    existing.filter(~col("station_name").isin(new_station_names))
-    .union(new_interchange)
-    .orderBy(desc("num_lines"))
-    .limit(15)
-)
+if existing is not None:
+    old_others = existing.filter(~col("station_name").isin(new_station_names))
+    updated_interchange = (
+        old_others.union(new_interchange)
+        .orderBy(desc("num_lines"))
+        .limit(15)
+    )
+else:
+    updated_interchange = new_interchange.orderBy(desc("num_lines")).limit(15)
 updated_interchange.show(truncate=False)
 save_gold(updated_interchange, "gold_interchange_stations")
 
@@ -496,7 +507,7 @@ new_night_tube = (
 )
 
 existing = read_gold("gold_night_tube_analysis")
-merged   = existing.union(new_night_tube)
+merged   = merge_with_gold(existing, new_night_tube)
 updated  = (
     merged
     .groupBy("has_night_tube")

@@ -92,6 +92,20 @@ LOCATION '/tmp/subirna/TFL_project/fact_passenger_entry_exit'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 -- ============================================================
+-- WATERMARK TABLE: tracks which years of fact_passenger_entry_exit
+-- have been loaded into year-based gold tables.
+-- NOT dropped on re-run — must persist across all pipeline runs.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS subirna_tfl.incremental_watermark (
+  source_table   STRING,
+  processed_year INT,
+  processed_at   TIMESTAMP
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/incremental_watermark';
+
+-- ============================================================
 -- GOLD LAYER: Drop old managed/ACID tables then re-create as
 -- external parquet tables pointing to Spark output on HDFS.
 -- ============================================================

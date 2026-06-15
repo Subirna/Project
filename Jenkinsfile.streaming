@@ -160,22 +160,22 @@ pipeline {
                         "python3 -m pip install --user requests kafka-python 2>&1 | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "--- Step 3: Install thrift using upgraded pip binary (~/.local/bin/pip) ---"
+                    echo "--- Step 3: Install thrift using upgraded pip binary (/home/consultant/.local/bin/pip) ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "\$HOME/.local/bin/pip install --user thrift 2>&1 | tail -3" 2>&1 | \
+                        "/home/consultant/.local/bin/pip install --user thrift 2>&1 | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
                     echo "--- Step 4: Install happybase using upgraded pip binary (no-deps avoids thriftpy2) ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "\$HOME/.local/bin/pip install --user --no-deps happybase 2>&1 | tail -3" 2>&1 | \
+                        "/home/consultant/.local/bin/pip install --user --no-deps happybase 2>&1 | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
                     echo "--- Step 5: Verify ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "\$HOME/.local/bin/pip show requests kafka-python thrift happybase 2>&1 | grep -E '^(Name|Version):'" 2>&1 | \
+                        "/home/consultant/.local/bin/pip show requests kafka-python thrift happybase 2>&1 | grep -E '^(Name|Version):'" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
                 '''
             }

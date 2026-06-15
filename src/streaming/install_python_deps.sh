@@ -30,9 +30,13 @@ $PYTHON -m pip install "thrift==0.13.0" 2>&1 | tail -3 || \
 $PYTHON -m pip install "thrift==0.11.0" 2>&1 | tail -3 || \
 echo "WARNING: all thrift versions failed"
 
-# Step 4: happybase without deps (skips thriftpy2 which also needs C build).
-# At runtime happybase falls back to thrift if thriftpy2 is absent.
-echo "--- Installing happybase ---"
+# Step 4: happybase.  Install its small pure-Python deps first (they have wheels
+# so pip 9.0.3 handles them fine), then happybase itself with --no-deps so that
+# pip does NOT try to pull thriftpy2 (which needs a C build and would fail).
+echo "--- Installing happybase deps (importlib-resources, six) ---"
+$PYTHON -m pip install importlib-resources six 2>&1 | tail -3
+
+echo "--- Installing happybase (no-deps: thrift already installed above) ---"
 $PYTHON -m pip install --no-deps happybase 2>&1 | tail -3
 
 # Step 5: Verify every import works end-to-end.

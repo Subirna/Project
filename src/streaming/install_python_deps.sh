@@ -2,33 +2,40 @@
 echo "=== Installing Python dependencies ==="
 PYTHON=python3
 
-echo "Python: $($PYTHON --version 2>&1)"
+echo "Python:  $($PYTHON --version 2>&1)"
+echo "At:      $(which $PYTHON)"
+echo "Pip:     $($PYTHON -m pip --version 2>&1 | head -1)"
 
-# Step 1: Upgrade setuptools + wheel (both have pre-built wheels so pip 9.0.3 can handle them).
-# Newer setuptools is what allows pip 9.0.3 to successfully run 'setup.py egg_info'
-# when building thrift from source.
-echo "--- Upgrading setuptools and wheel ---"
-$PYTHON -m pip install --user "setuptools>=40.0,<60.0" wheel 2>&1 | tail -3
+# IMPORTANT: do NOT use --user.
+# python3 here is the pyenv36 Python (/home/consultant/pyenv36/bin/python3).
+# When pyenv is active, ~/.local/lib/... (user site) is excluded from sys.path,
+# so --user installs are invisible at runtime.  Installing without --user puts
+# packages into /home/consultant/pyenv36/lib/python3.6/site-packages/ which
+# IS on sys.path, so imports work.
 
-# Step 2: Pure-Python packages — no C build needed, always succeed.
+# Step 1: Upgrade setuptools inside pyenv (needed for thrift's setup.py to run).
+echo "--- Upgrading setuptools in pyenv ---"
+$PYTHON -m pip install "setuptools>=40,<60" 2>&1 | tail -3
+
+# Step 2: Pure-Python packages — no C build needed.
 echo "--- Installing requests and kafka-python ---"
-$PYTHON -m pip install --user requests kafka-python 2>&1 | tail -3
+$PYTHON -m pip install requests kafka-python 2>&1 | tail -3
 
-# Step 3: thrift — needs C build.  Try latest first, fall back to older releases
-# that are known to support Python 3.6 with a simple setup.py.
+# Step 3: thrift — requires C build. Try latest first, fall back to older
+# versions known to support Python 3.6.
 echo "--- Installing thrift ---"
-$PYTHON -m pip install --user thrift 2>&1 | tail -3 || \
-$PYTHON -m pip install --user "thrift==0.15.0" 2>&1 | tail -3 || \
-$PYTHON -m pip install --user "thrift==0.13.0" 2>&1 | tail -3 || \
-$PYTHON -m pip install --user "thrift==0.11.0" 2>&1 | tail -3 || \
+$PYTHON -m pip install thrift 2>&1 | tail -3 || \
+$PYTHON -m pip install "thrift==0.15.0" 2>&1 | tail -3 || \
+$PYTHON -m pip install "thrift==0.13.0" 2>&1 | tail -3 || \
+$PYTHON -m pip install "thrift==0.11.0" 2>&1 | tail -3 || \
 echo "WARNING: all thrift versions failed"
 
-# Step 4: happybase — install without deps to skip thriftpy2.
-# At runtime happybase tries thriftpy2 first, falls back to thrift, which we just installed.
+# Step 4: happybase without deps (skips thriftpy2 which also needs C build).
+# At runtime happybase falls back to thrift if thriftpy2 is absent.
 echo "--- Installing happybase ---"
-$PYTHON -m pip install --user --no-deps happybase 2>&1 | tail -3
+$PYTHON -m pip install --no-deps happybase 2>&1 | tail -3
 
-# Step 5: Verify imports work end-to-end.
+# Step 5: Verify every import works end-to-end.
 echo "--- Verifying imports ---"
 $PYTHON -c "import requests; print('requests', requests.__version__)"
 $PYTHON -c "import kafka; print('kafka-python OK')"

@@ -148,6 +148,12 @@ pipeline {
                 echo '  requests, kafka-python, thrift, happybase'
                 echo '========================================='
                 sh '''
+                    echo "--- Upgrading pip (pip 9.0.3 is too old for modern package builds) ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "python3 -m pip install --user --upgrade pip 2>&1 | tail -2" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
                     echo "--- Installing requests ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
@@ -160,22 +166,22 @@ pipeline {
                         "python3 -m pip install --user kafka-python 2>&1 | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "--- Installing thrift (pure Python, happybase backend) ---"
+                    echo "--- Installing thrift (happybase backend) ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
                         "python3 -m pip install --user thrift 2>&1 | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "--- Installing happybase (no-deps, uses thrift fallback) ---"
+                    echo "--- Installing happybase ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "python3 -m pip install --user --no-deps happybase 2>&1 | tail -3" 2>&1 | \
+                        "python3 -m pip install --user happybase 2>&1 | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "--- Verifying installs (pip list) ---"
+                    echo "--- Verifying installs (pip show) ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "python3 -m pip list --user 2>&1 | grep -iE 'requests|kafka-python|happybase|thrift'" 2>&1 | \
+                        "python3 -m pip show requests kafka-python thrift happybase 2>&1 | grep -E '^(Name|Version):'" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
                 '''
             }

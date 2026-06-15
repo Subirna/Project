@@ -41,7 +41,7 @@ HBase Row Key (aggregated table):
 
 USAGE:
   spark-submit --master local[2] \\
-      --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.8 \\
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \\
       streaming_spark.py
   (started by Jenkins with nohup — runs until manually stopped)
 

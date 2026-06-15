@@ -118,6 +118,9 @@ pipeline {
 
         // ======================================================
         //  STAGE 4: CREATE KAFKA TOPIC (IF NOT EXISTS)
+        //  Note: --if-not-exists is NOT supported with
+        //  --bootstrap-server in Kafka 2.5 (CDH 7.1.7).
+        //  Instead we create and ignore "already exists" error.
         // ======================================================
         stage('Create Kafka Topic') {
             steps {
@@ -128,13 +131,13 @@ pipeline {
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
                         "kafka-topics --bootstrap-server ${KAFKA_BROKER} \
-                            --create --if-not-exists \
-                            --topic ${KAFKA_TOPIC} \
+                            --create \
+                            --topic subirna_tfl_arrivals \
                             --partitions 1 \
-                            --replication-factor 1 2>&1 | grep -v 'WARN' || true" 2>&1 | \
+                            --replication-factor 1 2>&1 | grep -v 'WARN' | grep -v 'already exists' || true" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "Kafka topic ready: ${KAFKA_TOPIC}"
+                    echo "Kafka topic ready: subirna_tfl_arrivals"
                 '''
             }
         }
@@ -145,8 +148,9 @@ pipeline {
         //  Table 1: subirna_tfl_arrivals     ← RAW arrivals
         //  Table 2: subirna_tfl_arrivals_agg ← TRANSFORMED (Spark output)
         //
-        //  Both use column family 'cf'.
-        //  Safe to re-run — 'create' fails silently if table exists.
+        //  Table names are hardcoded (not variables) to avoid
+        //  shell quoting issues with HBase shell single quotes.
+        //  Safe to re-run — 'already exists' error is ignored.
         // ======================================================
         stage('Create HBase Tables') {
             steps {
@@ -156,16 +160,16 @@ pipeline {
                 echo '  subirna_tfl_arrivals_agg (transformed)'
                 echo '========================================='
                 sh '''
-                    echo "Creating raw table: ${HBASE_RAW_TABLE}"
+                    echo "Creating raw table: subirna_tfl_arrivals"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "echo \"create '${HBASE_RAW_TABLE}', 'cf'\" | hbase shell -n 2>&1 | tail -3" 2>&1 | \
+                        "echo \"create 'subirna_tfl_arrivals', 'cf'\" | hbase shell -n 2>&1 | grep -v 'AlreadyExistsException' | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "Creating aggregated table: ${HBASE_AGG_TABLE}"
+                    echo "Creating aggregated table: subirna_tfl_arrivals_agg"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "echo \"create '${HBASE_AGG_TABLE}', 'cf'\" | hbase shell -n 2>&1 | tail -3" 2>&1 | \
+                        "echo \"create 'subirna_tfl_arrivals_agg', 'cf'\" | hbase shell -n 2>&1 | grep -v 'AlreadyExistsException' | tail -3" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
                     echo "Both HBase tables ready"
@@ -279,7 +283,7 @@ pipeline {
                         ${REMOTE_USER}@${REMOTE_HOST} \
                         "nohup spark-submit \
                             --master local[2] \
-                            --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.8 \
+                            --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
                             ${PROJECT_DIR}/streaming/streaming_spark.py \
                             > ${SPARK_STREAM_LOG} 2>&1 &
                          echo 'Spark Streaming PID:' \$!" 2>&1 | \

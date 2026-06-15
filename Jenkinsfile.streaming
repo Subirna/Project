@@ -128,7 +128,15 @@ pipeline {
         //  Installs the three libraries used by the Python scripts:
         //    requests     → TFL API HTTP calls  (producer)
         //    kafka-python → Kafka producer/consumer (producer + consumer)
-        //    happybase    → HBase Thrift client  (consumer)
+        //    happybase    → HBase Thrift client  (consumer + Spark)
+        //
+        //  Install packages SEPARATELY so one failure does not block others.
+        //
+        //  happybase normally depends on thriftpy2 (needs C build from source,
+        //  which fails on this cluster). Solution:
+        //    1. Install the pure-Python 'thrift' library first
+        //    2. Install happybase with --no-deps (skips thriftpy2)
+        //  At runtime happybase tries thriftpy2 first, falls back to thrift.
         //
         //  Uses --user flag so no sudo required.
         //  Harmless to re-run — pip skips already-installed packages.
@@ -137,15 +145,40 @@ pipeline {
             steps {
                 echo '========================================='
                 echo 'Stage 4: Install Python packages on Cloudera'
-                echo '  requests, kafka-python, happybase'
+                echo '  requests, kafka-python, thrift, happybase'
                 echo '========================================='
                 sh '''
+                    echo "--- Installing requests ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "pip3 install --user requests kafka-python happybase 2>&1 | grep -E '(Successfully|already|ERROR|error)' | head -10" 2>&1 | \
+                        "python3 -m pip install --user requests 2>&1 | tail -2" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "Python dependencies installed"
+                    echo "--- Installing kafka-python ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "python3 -m pip install --user kafka-python 2>&1 | tail -2" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "--- Installing thrift (pure Python, happybase backend) ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "python3 -m pip install --user thrift 2>&1 | tail -2" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "--- Installing happybase (no-deps, uses thrift fallback) ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "python3 -m pip install --user --no-deps happybase 2>&1 | tail -2" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "--- Verifying installs ---"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "python3 -c \"import requests; print('requests OK:', requests.__version__)\" 2>&1
+                         python3 -c \"import kafka; print('kafka-python OK:', kafka.__version__)\" 2>&1
+                         python3 -c \"import happybase; print('happybase OK')\" 2>&1" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
                 '''
             }
         }

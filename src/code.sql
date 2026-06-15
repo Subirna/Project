@@ -158,6 +158,18 @@ LOCATION '/tmp/subirna/TFL_project/fact_passenger_entry_exit'
 TBLPROPERTIES ('serialization.null.format'='null');
 
 
+-- Watermark table: tracks which years of fact_passenger_entry_exit
+-- have already been loaded into year-based gold tables.
+-- Prevents duplicate appends when the incremental pipeline re-runs.
+CREATE TABLE IF NOT EXISTS subirna_tfl.incremental_watermark (
+  source_table   STRING,
+  processed_year INT,
+  processed_at   TIMESTAMP
+)
+STORED AS PARQUET
+LOCATION '/tmp/subirna/TFL_project/incremental_watermark';
+
+
 
 -- Busiest stations per year:
 SELECT d.year, s.station_name, SUM(f.total_passengers) AS total

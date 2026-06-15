@@ -261,6 +261,7 @@ spark.sql(f"""
         processed_at   TIMESTAMP
     )
     STORED AS PARQUET
+    LOCATION '/tmp/subirna/TFL_project/incremental_watermark'
 """)
 
 # Which years have already been loaded for this fact table?

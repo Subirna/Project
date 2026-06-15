@@ -30,13 +30,22 @@ $PYTHON -m pip install "thrift==0.13.0" 2>&1 | tail -3 || \
 $PYTHON -m pip install "thrift==0.11.0" 2>&1 | tail -3 || \
 echo "WARNING: all thrift versions failed"
 
-# Step 4: happybase.  Install its small pure-Python deps first (they have wheels
-# so pip 9.0.3 handles them fine), then happybase itself with --no-deps so that
-# pip does NOT try to pull thriftpy2 (which needs a C build and would fail).
-echo "--- Installing happybase deps (importlib-resources, six) ---"
-$PYTHON -m pip install importlib-resources six 2>&1 | tail -3
+# Step 4: thriftpy2. The happybase version already on the server (in lib64/)
+# does a hard "import thriftpy2" with no fallback.  0.4.14 is the last release
+# with a cp36-manylinux1_x86_64 wheel, which pip 9.0.3 can install without
+# any C compilation.
+echo "--- Installing thriftpy2 ---"
+$PYTHON -m pip install "thriftpy2==0.4.14" 2>&1 | tail -5 || \
+$PYTHON -m pip install thriftpy2 2>&1 | tail -5 || \
+echo "WARNING: thriftpy2 install failed"
 
-echo "--- Installing happybase (no-deps: thrift already installed above) ---"
+# Step 5: happybase. Uninstall first so pip removes the stale lib64/ copy,
+# then reinstall fresh from PyPI.  Pure-Python deps go in separately because
+# --no-deps prevents pip from pulling in thriftpy2 a second time or any
+# version it might incompatibly resolve.
+echo "--- Reinstalling happybase (clean install) ---"
+$PYTHON -m pip uninstall -y happybase 2>&1 | tail -2 || true
+$PYTHON -m pip install importlib-resources six 2>&1 | tail -3
 $PYTHON -m pip install --no-deps happybase 2>&1 | tail -3
 
 # Step 5: Verify every import works end-to-end.

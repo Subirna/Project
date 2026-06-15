@@ -117,6 +117,11 @@ pipeline {
                         ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/streaming/ 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/streaming/install_python_deps.sh \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/streaming/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
                     echo "All scripts copied to ${PROJECT_DIR}/streaming/"
                 '''
             }
@@ -125,21 +130,17 @@ pipeline {
         // ======================================================
         //  STAGE 4: INSTALL PYTHON DEPENDENCIES
         //
-        //  Installs the three libraries used by the Python scripts:
-        //    requests     → TFL API HTTP calls  (producer)
-        //    kafka-python → Kafka producer/consumer (producer + consumer)
-        //    happybase    → HBase Thrift client  (consumer + Spark)
+        //  All pip install logic lives in install_python_deps.sh
+        //  (copied in Stage 3) to avoid SSH quoting issues and
+        //  to allow proper shell fallback logic.
         //
-        //  Install packages SEPARATELY so one failure does not block others.
-        //
-        //  happybase normally depends on thriftpy2 (needs C build from source,
-        //  which fails on this cluster). Solution:
-        //    1. Install the pure-Python 'thrift' library first
-        //    2. Install happybase with --no-deps (skips thriftpy2)
-        //  At runtime happybase tries thriftpy2 first, falls back to thrift.
-        //
-        //  Uses --user flag so no sudo required.
-        //  Harmless to re-run — pip skips already-installed packages.
+        //  The script:
+        //    1. Upgrades setuptools (pip 9.0.3 can install the wheel;
+        //       newer setuptools lets pip 9.0.3 build thrift from source)
+        //    2. Installs requests + kafka-python (pure Python, always works)
+        //    3. Installs thrift, falling back to older versions if needed
+        //    4. Installs happybase --no-deps (avoids thriftpy2 dep)
+        //    5. Verifies all four imports succeed
         // ======================================================
         stage('Install Python Dependencies') {
             steps {
@@ -148,34 +149,9 @@ pipeline {
                 echo '  requests, kafka-python, thrift, happybase'
                 echo '========================================='
                 sh '''
-                    echo "--- Step 1: Upgrade pip (installs new pip binary to ~/.local/bin/) ---"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "python3 -m pip install --user --upgrade pip 2>&1 | tail -3" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
-
-                    echo "--- Step 2: Install requests and kafka-python (pure Python, no build needed) ---"
-                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        ${REMOTE_USER}@${REMOTE_HOST} \
-                        "python3 -m pip install --user requests kafka-python 2>&1 | tail -3" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
-
-                    echo "--- Step 3: Install thrift using upgraded pip binary (/home/consultant/.local/bin/pip) ---"
-                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        ${REMOTE_USER}@${REMOTE_HOST} \
-                        "/home/consultant/.local/bin/pip install --user thrift 2>&1 | tail -3" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
-
-                    echo "--- Step 4: Install happybase using upgraded pip binary (no-deps avoids thriftpy2) ---"
-                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        ${REMOTE_USER}@${REMOTE_HOST} \
-                        "/home/consultant/.local/bin/pip install --user --no-deps happybase 2>&1 | tail -3" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
-
-                    echo "--- Step 5: Verify ---"
-                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        ${REMOTE_USER}@${REMOTE_HOST} \
-                        "/home/consultant/.local/bin/pip show requests kafka-python thrift happybase 2>&1 | grep -E '^(Name|Version):'" 2>&1 | \
+                        "bash ${PROJECT_DIR}/streaming/install_python_deps.sh" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
                 '''
             }

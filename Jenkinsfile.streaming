@@ -84,16 +84,17 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 3: COPY ALL THREE STREAMING SCRIPTS
+        //  STAGE 3: COPY ALL STREAMING SCRIPTS
         //
-        //  send_data_to_kafka.py  → producer
+        //  send_data_to_kafka.py   → producer
         //  write_kafka_to_hbase.py → raw consumer
         //  streaming_spark.py      → Spark transform + agg consumer
+        //  create_hbase_tables.sh  → HBase DDL (run in Stage 5)
         // ======================================================
         stage('Copy Streaming Scripts') {
             steps {
                 echo '========================================='
-                echo 'Stage 3: Copy all 3 streaming scripts to Cloudera'
+                echo 'Stage 3: Copy all streaming scripts to Cloudera'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -111,13 +112,46 @@ pipeline {
                         ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/streaming/ 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
-                    echo "All 3 scripts copied to ${PROJECT_DIR}/streaming/"
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        src/streaming/create_hbase_tables.sh \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/streaming/ 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "All scripts copied to ${PROJECT_DIR}/streaming/"
                 '''
             }
         }
 
         // ======================================================
-        //  STAGE 4: CREATE KAFKA TOPIC (IF NOT EXISTS)
+        //  STAGE 4: INSTALL PYTHON DEPENDENCIES
+        //
+        //  Installs the three libraries used by the Python scripts:
+        //    requests     → TFL API HTTP calls  (producer)
+        //    kafka-python → Kafka producer/consumer (producer + consumer)
+        //    happybase    → HBase Thrift client  (consumer)
+        //
+        //  Uses --user flag so no sudo required.
+        //  Harmless to re-run — pip skips already-installed packages.
+        // ======================================================
+        stage('Install Python Dependencies') {
+            steps {
+                echo '========================================='
+                echo 'Stage 4: Install Python packages on Cloudera'
+                echo '  requests, kafka-python, happybase'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "pip3 install --user requests kafka-python happybase 2>&1 | grep -E '(Successfully|already|ERROR|error)' | head -10" 2>&1 | \
+                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
+
+                    echo "Python dependencies installed"
+                '''
+            }
+        }
+
+        // ======================================================
+        //  STAGE 5: CREATE KAFKA TOPIC (IF NOT EXISTS)
         //  Note: --if-not-exists is NOT supported with
         //  --bootstrap-server in Kafka 2.5 (CDH 7.1.7).
         //  Instead we create and ignore "already exists" error.
@@ -125,7 +159,7 @@ pipeline {
         stage('Create Kafka Topic') {
             steps {
                 echo '========================================='
-                echo 'Stage 4: Create Kafka Topic — subirna_tfl_arrivals'
+                echo 'Stage 5: Create Kafka Topic — subirna_tfl_arrivals'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -143,33 +177,30 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 5: CREATE BOTH HBase TABLES
+        //  STAGE 6: CREATE BOTH HBase TABLES
+        //
+        //  Uses create_hbase_tables.sh (copied in Stage 3).
+        //  Running HBase create via a script file avoids the
+        //  SSH + shell quoting problem with single quotes inside
+        //  double-quoted strings (HBase shell uses Ruby syntax
+        //  where table names must be in single quotes).
         //
         //  Table 1: subirna_tfl_arrivals     ← RAW arrivals
-        //  Table 2: subirna_tfl_arrivals_agg ← TRANSFORMED (Spark output)
+        //  Table 2: subirna_tfl_arrivals_agg ← TRANSFORMED (Spark)
         //
-        //  Table names are hardcoded (not variables) to avoid
-        //  shell quoting issues with HBase shell single quotes.
         //  Safe to re-run — 'already exists' error is ignored.
         // ======================================================
         stage('Create HBase Tables') {
             steps {
                 echo '========================================='
-                echo 'Stage 5: Create both HBase tables'
+                echo 'Stage 6: Create both HBase tables'
                 echo '  subirna_tfl_arrivals     (raw)'
                 echo '  subirna_tfl_arrivals_agg (transformed)'
                 echo '========================================='
                 sh '''
-                    echo "Creating raw table: subirna_tfl_arrivals"
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${REMOTE_USER}@${REMOTE_HOST} \
-                        "echo \"create 'subirna_tfl_arrivals', 'cf'\" | hbase shell -n 2>&1 | grep -v 'AlreadyExistsException' | tail -3" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
-
-                    echo "Creating aggregated table: subirna_tfl_arrivals_agg"
-                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        ${REMOTE_USER}@${REMOTE_HOST} \
-                        "echo \"create 'subirna_tfl_arrivals_agg', 'cf'\" | hbase shell -n 2>&1 | grep -v 'AlreadyExistsException' | tail -3" 2>&1 | \
+                        "bash ${PROJECT_DIR}/streaming/create_hbase_tables.sh" 2>&1 | \
                         grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || true
 
                     echo "Both HBase tables ready"
@@ -178,14 +209,14 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 6: STOP OLD PROCESSES
+        //  STAGE 7: STOP OLD PROCESSES
         //  Kills all three previously running streaming processes.
         //  Makes pipeline safe to re-run (idempotent).
         // ======================================================
         stage('Stop Old Processes') {
             steps {
                 echo '========================================='
-                echo 'Stage 6: Stop any previously running streaming processes'
+                echo 'Stage 7: Stop any previously running streaming processes'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -210,14 +241,14 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 7: START PRODUCER
+        //  STAGE 8: START PRODUCER
         //  TFL API → Kafka topic: subirna_tfl_arrivals
         //  Polls every 30 seconds.
         // ======================================================
         stage('Start Producer') {
             steps {
                 echo '========================================='
-                echo 'Stage 7: Start Producer (TFL API → Kafka)'
+                echo 'Stage 8: Start Producer (TFL API → Kafka)'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -234,14 +265,14 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 8: START CONSUMER (RAW → HBase)
+        //  STAGE 9: START CONSUMER (RAW → HBase)
         //  Kafka → HBase table: subirna_tfl_arrivals
         //  Writes every raw arrival as a single row.
         // ======================================================
         stage('Start Consumer') {
             steps {
                 echo '========================================='
-                echo 'Stage 8: Start Consumer (Kafka → HBase raw table)'
+                echo 'Stage 9: Start Consumer (Kafka → HBase raw table)'
                 echo '========================================='
                 sh '''
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -258,7 +289,7 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 9: START SPARK STRUCTURED STREAMING
+        //  STAGE 10: START SPARK STRUCTURED STREAMING
         //
         //  Reads same Kafka topic as consumer.
         //  Transforms: aggregates arrivals per station per day.
@@ -275,7 +306,7 @@ pipeline {
         stage('Start Spark Streaming') {
             steps {
                 echo '========================================='
-                echo 'Stage 9: Start Spark Structured Streaming'
+                echo 'Stage 10: Start Spark Structured Streaming'
                 echo 'Kafka → Spark transforms → HBase aggregated table'
                 echo '========================================='
                 sh '''
@@ -296,12 +327,12 @@ pipeline {
         }
 
         // ======================================================
-        //  STAGE 10: VERIFY ALL THREE PROCESSES ARE RUNNING
+        //  STAGE 11: VERIFY ALL THREE PROCESSES ARE RUNNING
         // ======================================================
         stage('Verify Streaming Is Running') {
             steps {
                 echo '========================================='
-                echo 'Stage 10: Verify all 3 processes are running'
+                echo 'Stage 11: Verify all 3 processes are running'
                 echo '========================================='
                 sh '''
                     echo "--- Running streaming processes ---"
@@ -356,8 +387,8 @@ pipeline {
             echo "  tail -f ${SPARK_STREAM_LOG}"
             echo ''
             echo 'To verify HBase data:'
-            echo "  echo \"scan '${HBASE_RAW_TABLE}', {LIMIT => 5}\" | hbase shell -n"
-            echo "  echo \"scan '${HBASE_AGG_TABLE}', {LIMIT => 5}\" | hbase shell -n"
+            echo "  echo \"scan 'subirna_tfl_arrivals', {LIMIT => 5}\" | hbase shell -n"
+            echo "  echo \"scan 'subirna_tfl_arrivals_agg', {LIMIT => 5}\" | hbase shell -n"
             echo ''
             echo 'To stop all streaming:'
             echo '  pkill -f send_data_to_kafka.py'

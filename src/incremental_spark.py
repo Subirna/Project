@@ -341,8 +341,8 @@ if years_to_process:
     new_quarterly_trend = (
         fact_pax_new_filtered
         .groupBy(
-            col("year").cast(IntegerType()),
-            col("quarter").cast(IntegerType())
+            col("year").cast(IntegerType()).alias("year"),
+            col("quarter").cast(IntegerType()).alias("quarter")
         )
         .agg(_sum("total_entry_exit").alias("total_passengers"))
         .orderBy("year", "quarter")
